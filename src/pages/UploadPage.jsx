@@ -14,7 +14,12 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
       const grouped = { savant: [], blast: [], combined: [] };
 
       // 1. Fetch from Unified Table (Small files)
-      const { data: unifiedData } = await client.from('baseball_data').select('*');
+      let unifiedQuery = client.from('baseball_data').select('*');
+      if (profile?.role !== 'admin') {
+        unifiedQuery = unifiedQuery.eq('team_id', profile?.team_id);
+      }
+      const { data: unifiedData } = await unifiedQuery;
+      
       if (unifiedData) {
         unifiedData.forEach(item => {
           let parsedData = [];
@@ -36,7 +41,15 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
 
       // 2. Fetch from Specialized Tables (Large files - grouped by filename)
       const fetchSpecialized = async (tableName, type) => {
-        const { data: rows, error } = await client.from(tableName).select('*').limit(200000); // Guard limit
+        let query = client.from(tableName).select('*');
+        
+        // Filter by team unless admin
+        if (profile?.role !== 'admin') {
+          query = query.eq('team_id', profile?.team_id);
+        }
+
+        // Fetch first 50,000 rows (Supabase default limit is 1000)
+        const { data: rows, error } = await query.range(0, 49999);
         if (error || !rows) return;
 
         // Group rows by file_name
@@ -47,7 +60,7 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
             filesMap[name] = {
               id: row.upload_id || `legacy-${name}`,
               filename: name,
-              headers: Object.keys(row).filter(k => !['id', 'created_at', 'file_name', 'upload_id'].includes(k)),
+              headers: Object.keys(row).filter(k => !['id', 'created_at', 'file_name', 'upload_id', 'team_id', 'owner_id', 'updated_at'].includes(k)),
               data: []
             };
           }
