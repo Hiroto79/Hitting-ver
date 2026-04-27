@@ -44,12 +44,12 @@ function PlayerAnalysis({ savantData, blastData }) {
 
   return (
     <div className="animate-in fade-in duration-300">
-      <header className="mb-10">
+      <header className="mb-10 print:hidden">
         <h2 className="text-4xl font-extrabold text-white mb-2">個人成績分析</h2>
         <p className="text-slate-400 text-lg">選手を特定して詳細な打撃レポートを表示します。</p>
       </header>
 
-      <div className="bg-blue-900/10 border-2 border-blue-500/30 p-8 rounded-3xl mb-10 shadow-2xl backdrop-blur-sm">
+      <div className="bg-blue-900/10 border-2 border-blue-500/30 p-8 rounded-3xl mb-10 shadow-2xl backdrop-blur-sm print:hidden">
         <div className="flex items-center mb-6 text-blue-300">
           <Settings2 className="w-6 h-6 mr-2" />
           <h3 className="text-xl font-bold">分析設定</h3>

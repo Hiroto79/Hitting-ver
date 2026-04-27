@@ -1,7 +1,9 @@
 import React from 'react';
-import { UploadCloud, Users, User, LineChart, Trophy, HardDrive, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { UploadCloud, Users, User, LineChart, Trophy, HardDrive, RefreshCw, CheckCircle2, AlertCircle, Shield, LogOut } from 'lucide-react';
 
-function Sidebar({ activeView, setActiveView, savantData, isOpen, syncState }) {
+function Sidebar({ activeView, setActiveView, savantData, isOpen, syncState, profile, onLogout }) {
+  const isAdmin = profile?.role === 'admin';
+
   const menuItems = [
     { id: 'upload', label: 'データ読み込み', icon: UploadCloud },
     { id: 'cloud', label: 'クラウド管理', icon: HardDrive },
@@ -9,6 +11,7 @@ function Sidebar({ activeView, setActiveView, savantData, isOpen, syncState }) {
     { id: 'player', label: '個人成績', icon: User, disabled: !savantData },
     { id: 'game', label: '試合スタッツ', icon: Trophy, disabled: !savantData },
     { id: 'custom', label: 'カスタムグラフ', icon: LineChart, disabled: !savantData },
+    ...(isAdmin ? [{ id: 'admin', label: '管理者パネル', icon: Shield }] : []),
   ];
 
   return (
@@ -49,7 +52,18 @@ function Sidebar({ activeView, setActiveView, savantData, isOpen, syncState }) {
         })}
       </nav>
 
-      <div className="p-4 border-t border-gray-800 space-y-2">
+        {profile && (
+          <div className="px-4 py-3 border-t border-gray-800 flex items-center justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-white truncate">{profile.display_name || profile.email}</p>
+              <p className="text-[10px] text-slate-500">{profile.role === 'admin' ? '管理者' : (profile.team_id || 'チーム未割当')}</p>
+            </div>
+            <button onClick={onLogout} title="ログアウト" className="ml-2 text-slate-500 hover:text-red-400 transition-colors flex-shrink-0">
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        <div className="px-4 pb-3 space-y-2">
         {syncState.saving && (
           <div className="flex items-center justify-center gap-2 text-blue-400 animate-pulse text-[10px] font-bold uppercase">
             <RefreshCw className="w-3 h-3 animate-spin" />
@@ -63,9 +77,14 @@ function Sidebar({ activeView, setActiveView, savantData, isOpen, syncState }) {
           </div>
         )}
         {syncState.lastError && (
-          <div className="flex items-center justify-center gap-2 text-red-500 text-[10px] font-bold uppercase">
-            <AlertCircle className="w-3 h-3" />
-            Sync Failed
+          <div className="flex flex-col items-center justify-center gap-1 text-red-500 text-[10px] font-bold uppercase p-2 bg-red-500/10 rounded-lg border border-red-500/20">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-3 h-3" />
+              Sync Failed
+            </div>
+            <div className="lowercase font-normal text-red-400/80 truncate w-full text-center overflow-hidden" title={syncState.lastError}>
+              {syncState.lastError}
+            </div>
           </div>
         )}
         <div className="text-[10px] text-gray-600 text-center">

@@ -1,46 +1,80 @@
 import React from 'react';
 import Papa from 'papaparse';
-import { UploadCloud, FileText, Database, Cloud, Save, RefreshCw } from 'lucide-react';
+import { UploadCloud, FileText, Database, Cloud, Save, RefreshCw, X } from 'lucide-react';
 import { getSupabase } from '../lib/supabase';
 
-function UploadPage({ savantData, setSavantData, blastData, setBlastData, combinedData, setCombinedData, setActiveView, saveToCloud, syncState }) {
-  const [supabaseKey, setSupabaseKey] = React.useState(localStorage.getItem('supabase_anon_key') || '');
+function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, setActiveView, saveToCloud, syncState, profile }) {
   const [isLoading, setIsLoading] = React.useState(false);
 
   const loadFromSupabase = async () => {
-    if (!supabaseKey) return;
     setIsLoading(true);
-    localStorage.setItem('supabase_anon_key', supabaseKey);
-    const client = getSupabase(supabaseKey);
+    const client = getSupabase();
 
     try {
-      const { data, error } = await client.from('baseball_data').select('*');
-      if (error) throw error;
+      const grouped = { savant: [], blast: [], combined: [] };
 
-      // Group by type to merge multiple files of the same type
-      const grouped = data.reduce((acc, item) => {
-        if (!acc[item.type]) acc[item.type] = { filename: 'Merged Data', headers: item.headers, data: [], is_csv: item.is_csv };
-        
-        // Handle parsing if it's still a string (though updateDataState will do it too, 
-        // we merge first to avoid multiple parse calls)
-        let itemData = item.data;
-        if (item.is_csv && typeof item.data === 'string') {
-          const results = Papa.parse(item.data, { header: true, dynamicTyping: true, skipEmptyLines: true });
-          itemData = results.data;
-        }
-        
-        acc[item.type].data = [...acc[item.type].data, ...(Array.isArray(itemData) ? itemData : [])];
-        return acc;
-      }, {});
+      // 1. Fetch from Unified Table (Small files)
+      const { data: unifiedData } = await client.from('baseball_data').select('*');
+      if (unifiedData) {
+        unifiedData.forEach(item => {
+          let parsedData = [];
+          if (item.data) {
+            try {
+              if (typeof item.data === 'string') {
+                const results = Papa.parse(item.data, { header: true, dynamicTyping: true, skipEmptyLines: true });
+                parsedData = results.data;
+              } else {
+                parsedData = Array.isArray(item.data) ? item.data : [];
+              }
+            } catch (e) { console.error(e); }
+          }
+          if (grouped[item.type]) {
+            grouped[item.type].push({ id: item.id, filename: item.filename, headers: item.headers, data: parsedData, is_csv: true });
+          }
+        });
+      }
 
-      if (grouped.savant) setSavantData(grouped.savant);
-      if (grouped.blast) setBlastData(grouped.blast);
-      if (grouped.combined) setCombinedData(grouped.combined);
+      // 2. Fetch from Specialized Tables (Large files - grouped by filename)
+      const fetchSpecialized = async (tableName, type) => {
+        const { data: rows, error } = await client.from(tableName).select('*').limit(200000); // Guard limit
+        if (error || !rows) return;
+
+        // Group rows by file_name
+        const filesMap = {};
+        rows.forEach(row => {
+          const name = row.file_name || '不明なファイル';
+          if (!filesMap[name]) {
+            filesMap[name] = {
+              id: row.upload_id || `legacy-${name}`,
+              filename: name,
+              headers: Object.keys(row).filter(k => !['id', 'created_at', 'file_name', 'upload_id'].includes(k)),
+              data: []
+            };
+          }
+          filesMap[name].data.push(row);
+        });
+
+        Object.values(filesMap).forEach(file => grouped[type].push(file));
+      };
+
+      await fetchSpecialized('savant_data', 'savant');
+      await fetchSpecialized('blast_data', 'blast');
+
+      const totalFiles = grouped.savant.length + grouped.blast.length + grouped.combined.length;
+      if (totalFiles === 0) {
+        alert("クラウドに保存されているデータが見つかりませんでした。");
+        return;
+      }
+
+      updateDataState('savant', grouped.savant, 'set');
+      updateDataState('blast', grouped.blast, 'set');
+      updateDataState('combined', grouped.combined, 'set');
       
-      if (data.length > 0) alert(`${data.length} 個のファイルをマージして読み込みました。`);
+      alert(`${totalFiles} 個のファイルを同期しました。分析画面へ移動します。`);
+      setActiveView('team');
     } catch (err) {
       console.error(err);
-      alert("読み込みに失敗しました。");
+      alert("同期に失敗しました:\n" + (err.message || "Unknown Error"));
     } finally {
       setIsLoading(false);
     }
@@ -65,25 +99,11 @@ function UploadPage({ savantData, setSavantData, blastData, setBlastData, combin
           alert("警告: SavantデータがBlastスロットにアップロードされた可能性があります。");
         }
 
-        if (type === 'savant') {
-          setSavantData({
-            filename: file.name,
-            headers: headers,
-            data: results.data
-          });
-        } else if (type === 'blast') {
-          setBlastData({
-            filename: file.name,
-            headers: headers,
-            data: results.data
-          });
-        } else if (type === 'combined') {
-          setCombinedData({
-            filename: file.name,
-            headers: headers,
-            data: results.data
-          });
-        }
+        updateDataState(type, {
+          filename: file.name,
+          headers: headers,
+          data: results.data
+        }, 'add');
       },
       error: (err) => {
         console.error("Error parsing CSV:", err);
@@ -92,56 +112,60 @@ function UploadPage({ savantData, setSavantData, blastData, setBlastData, combin
     });
   };
 
-  const renderDataView = (dataObj, title) => {
-    if (!dataObj) {
+  const renderDataView = (files, typeLabel) => {
+    if (!files || files.length === 0) {
       return (
         <div className="flex flex-col items-center justify-center h-48 border-2 border-dashed border-slate-700 rounded-xl bg-slate-800/50 text-slate-400">
           <UploadCloud className="w-10 h-10 mb-3 opacity-50" />
-          <p className="text-sm">ここに{title}のCSVファイルをアップロードしてください</p>
+          <p className="text-sm font-bold">データ未アップロード</p>
+          <p className="text-xs opacity-75 mt-1 text-center px-4">CSVファイルを選択するか、<br/>クラウドから同期してください</p>
         </div>
       );
     }
 
+    const totalRows = files.reduce((acc, f) => acc + (f.data ? f.data.length : 0), 0);
+
     return (
-      <div className="bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-md">
-        <div className="flex items-center space-x-3 mb-4 border-b border-slate-700 pb-4">
-          <FileText className="text-blue-400 w-6 h-6" />
-          <h2 className="text-lg font-bold text-white flex-1 truncate">{dataObj.filename}</h2>
-          <span className={`px-2 py-1 rounded text-xs font-bold text-white ${title === 'Savant' ? 'bg-blue-600' : title === 'Blast' ? 'bg-purple-600' : 'bg-emerald-600'}`}>
-            {dataObj.data.length.toLocaleString()} 行
-          </span>
-        </div>
-        
-        <div className="mb-4">
-          <h3 className="text-sm font-semibold text-slate-300 mb-2 flex items-center">
-            <Database className="w-4 h-4 mr-2" />
-            読み込まれた列名（一部）
-          </h3>
-          <div className="flex flex-wrap gap-1.5 h-16 overflow-hidden relative">
-            {dataObj.headers.slice(0, 15).map((header, idx) => (
-              <span key={idx} className="px-2 py-1 bg-slate-700 text-slate-300 rounded text-xs border border-slate-600 truncate max-w-[150px]">
-                {header}
-              </span>
-            ))}
-            {dataObj.headers.length > 15 && (
-              <div className="absolute bottom-0 right-0 bg-gradient-to-l from-slate-800 w-16 h-full flex items-end justify-end">
-                <span className="text-xs text-slate-400 font-bold bg-slate-800 pl-2">+{dataObj.headers.length - 15} more</span>
-              </div>
-            )}
+      <div className="flex flex-col h-48 border border-emerald-500/30 rounded-xl bg-emerald-900/10 p-4 relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500"></div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center">
+            <FileText className="w-5 h-5 text-emerald-400 mr-2" />
+            <span className="text-sm font-bold text-emerald-300">読込完了 ({files.length} ファイル)</span>
           </div>
-        </div>
-        
-        <div className="flex gap-2">
           <button 
-            onClick={() => saveToCloud(title.toLowerCase(), dataObj)}
+            onClick={() => files.forEach(f => saveToCloud(typeLabel.toLowerCase(), f))}
             disabled={syncState.saving}
-            className={`flex-1 flex items-center justify-center gap-2 border py-2 rounded-lg text-xs font-bold transition-all ${
-              syncState.saving ? 'bg-slate-700 border-slate-600 text-slate-500 cursor-wait' : 'bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border-emerald-500/30'
+            className={`flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              syncState.saving ? 'bg-slate-700 text-slate-500 cursor-wait' : 'bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/30'
             }`}
           >
             <Save className={`w-3.5 h-3.5 ${syncState.saving ? 'animate-pulse' : ''}`} />
-            {syncState.saving ? '保存中...' : 'クラウド保存'}
+            保存
           </button>
+        </div>
+        
+        <div className="text-xs text-slate-300 mb-2 flex-1 overflow-y-auto pr-2 space-y-1">
+          {files.map((f, idx) => (
+            <div key={idx} className="bg-slate-800/50 px-2 py-1.5 rounded truncate border border-slate-700/50 flex justify-between items-center group">
+              <span className="truncate mr-2">{f.filename}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500 text-[10px]">{f.data?.length || 0}行</span>
+                <button 
+                  onClick={() => updateDataState(typeLabel.toLowerCase(), idx, 'remove')}
+                  className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                  title="このファイルを削除"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        
+        <div className="text-xs text-slate-400 mt-auto font-bold bg-slate-900/50 p-2 rounded-lg border border-slate-700 flex justify-between items-center">
+          <span>合計データ数</span>
+          <span className="text-white text-sm">{totalRows} <span className="text-xs text-slate-400 font-normal">行</span></span>
         </div>
       </div>
     );
@@ -154,21 +178,14 @@ function UploadPage({ savantData, setSavantData, blastData, setBlastData, combin
           <h2 className="text-3xl font-extrabold text-white mb-2">データ管理</h2>
           <p className="text-slate-400">CSVアップロードまたはクラウド(Supabase)からデータを同期します。</p>
         </div>
-        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 flex flex-col gap-3 w-full md:min-w-[300px] md:w-auto">
+        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 flex flex-col gap-3 w-full md:w-auto">
           <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
             <Cloud className="w-4 h-4 text-blue-400" />
-            Supabase 同期
+            クラウド同期
           </div>
-          <input 
-            type="password" 
-            placeholder="Supabase Anon Key を入力" 
-            value={supabaseKey}
-            onChange={(e) => setSupabaseKey(e.target.value)}
-            className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none"
-          />
           <button 
             onClick={loadFromSupabase}
-            disabled={isLoading || !supabaseKey}
+            disabled={isLoading}
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white text-xs font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-2"
           >
             {isLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Cloud className="w-3 h-3" />}
@@ -190,7 +207,7 @@ function UploadPage({ savantData, setSavantData, blastData, setBlastData, combin
               <input type="file" accept=".csv" className="hidden" onChange={(e) => handleFileUpload(e, 'savant')} />
             </label>
           </div>
-          {renderDataView(savantData, 'Savant')}
+          {renderDataView(savantFiles, 'savant')}
         </div>
 
         {/* Blast Card */}
@@ -205,7 +222,7 @@ function UploadPage({ savantData, setSavantData, blastData, setBlastData, combin
               <input type="file" accept=".csv" className="hidden" onChange={(e) => handleFileUpload(e, 'blast')} />
             </label>
           </div>
-          {renderDataView(blastData, 'Blast')}
+          {renderDataView(blastFiles, 'blast')}
         </div>
 
         {/* Combined Card */}
@@ -220,11 +237,11 @@ function UploadPage({ savantData, setSavantData, blastData, setBlastData, combin
               <input type="file" accept=".csv" className="hidden" onChange={(e) => handleFileUpload(e, 'combined')} />
             </label>
           </div>
-          {renderDataView(combinedData, 'Combined')}
+          {renderDataView(combinedFiles, 'combined')}
         </div>
       </div>
 
-      {savantData && (
+      {savantFiles.length > 0 && (
         <div className="mt-10 p-6 bg-blue-900/20 border border-blue-500/30 rounded-2xl flex flex-col sm:flex-row items-center justify-between">
           <div>
             <h4 className="text-lg font-bold text-blue-100 mb-1">データの準備ができました！</h4>

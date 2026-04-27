@@ -14,6 +14,7 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
   const [hitsOnly, setHitsOnly] = useState(false);
   const [laRange, setLaRange] = useState([-90, 90]);
   const [groupedData, setGroupedData] = useState({});
+  const [activePlayers, setActivePlayers] = useState([]); // Filter state
   const headers = activeData ? activeData.headers : [];
 
   useEffect(() => {
@@ -27,6 +28,11 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
   useEffect(() => {
     if (selectedTeam && groupedData[selectedTeam]) {
       const teamPlayers = groupedData[selectedTeam];
+      
+      // Initialize active players when team changes
+      if (activePlayers.length === 0 || !activePlayers.some(p => Object.keys(teamPlayers).includes(p))) {
+        setActivePlayers(Object.keys(teamPlayers));
+      }
       
       const statsList = Object.keys(teamPlayers).map(player => {
         const events = teamPlayers[player];
@@ -46,6 +52,7 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
           avgBatSpeed: Number(calculateAverages(filteredEvents, 'bat_speed')),
           avgAttackAngle: Number(calculateAverages(filteredEvents, 'attack_angle')),
           avgExitVelo: Number(calculateAverages(filteredEvents, 'launch_speed')),
+          avgLaunchAngle: Number(calculateAverages(filteredEvents, 'launch_angle')),
           swings: filteredEvents.length
         };
       }).filter(s => s.swings > 0);
@@ -53,21 +60,34 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
       // Sort by Bat Speed descending
       statsList.sort((a, b) => b.avgBatSpeed - a.avgBatSpeed);
 
-      const teamAvgBatSpeed = statsList.length > 0 ? (statsList.reduce((acc, s) => acc + s.avgBatSpeed, 0) / statsList.length).toFixed(1) : 0;
-      const teamAvgAttackAngle = statsList.length > 0 ? (statsList.reduce((acc, s) => acc + s.avgAttackAngle, 0) / statsList.length).toFixed(1) : 0;
+      const activeStats = statsList.filter(s => activePlayers.includes(s.player));
+
+      const teamAvgBatSpeed = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + s.avgBatSpeed, 0) / activeStats.length).toFixed(1) : 0;
+      const teamAvgAttackAngle = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + s.avgAttackAngle, 0) / activeStats.length).toFixed(1) : 0;
+      const teamAvgExitVelo = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + s.avgExitVelo, 0) / activeStats.length).toFixed(1) : 0;
+      const teamAvgLaunchAngle = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + s.avgLaunchAngle, 0) / activeStats.length).toFixed(1) : 0;
 
       setTeamStats({
-        players: statsList,
+        allPlayers: statsList,
+        players: activeStats,
         teamAvgBatSpeed,
-        teamAvgAttackAngle
+        teamAvgAttackAngle,
+        teamAvgExitVelo,
+        teamAvgLaunchAngle
       });
     } else {
       setTeamStats(null);
+      setActivePlayers([]);
     }
-  }, [selectedTeam, groupedData, hitsOnly, laRange]);
+  }, [selectedTeam, groupedData, hitsOnly, laRange, activePlayers]);
 
   // Generate colors for scatter plot points
-  const COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+  const COLORS = [
+    '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', 
+    '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16',
+    '#06b6d4', '#d946ef', '#f43f5e', '#eab308', '#22c55e',
+    '#a855f7', '#0ea5e9', '#f87171', '#34d399', '#fbbf24'
+  ];
 
   return (
     <div className="animate-in fade-in duration-300">
@@ -188,14 +208,62 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
 
       {teamStats ? (
         <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-blue-900/30 border border-blue-800/50 rounded-xl p-6 flex flex-col items-center justify-center text-center">
-              <div className="text-blue-300 text-sm font-medium mb-1">チーム平均バットスピード</div>
-              <div className="text-4xl font-extrabold text-white">{teamStats.teamAvgBatSpeed} <span className="text-lg text-blue-400 font-normal">mph</span></div>
+          
+          <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+            <h3 className="text-sm font-bold text-slate-300 mb-3 flex items-center">
+              <Users className="w-4 h-4 mr-2" />
+              比較する選手を選択
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setActivePlayers(teamStats.allPlayers.map(p => p.player))}
+                className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-xs rounded-lg transition-colors text-white"
+              >
+                全選択
+              </button>
+              <button
+                onClick={() => setActivePlayers([])}
+                className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-xs rounded-lg transition-colors text-white"
+              >
+                クリア
+              </button>
+              <div className="w-px h-6 bg-slate-600 mx-2"></div>
+              {teamStats.allPlayers.map((p, i) => {
+                const isActive = activePlayers.includes(p.player);
+                return (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      if (isActive) setActivePlayers(activePlayers.filter(ap => ap !== p.player));
+                      else setActivePlayers([...activePlayers, p.player]);
+                    }}
+                    className={`px-3 py-1 text-xs rounded-lg transition-all border ${
+                      isActive ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {p.player}
+                  </button>
+                );
+              })}
             </div>
-            <div className="bg-green-900/30 border border-green-800/50 rounded-xl p-6 flex flex-col items-center justify-center text-center">
-              <div className="text-green-300 text-sm font-medium mb-1">チーム平均アッパースイング度</div>
-              <div className="text-4xl font-extrabold text-white">{teamStats.teamAvgAttackAngle} <span className="text-lg text-green-400 font-normal">°</span></div>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-blue-900/30 border border-blue-800/50 rounded-xl p-4 flex flex-col items-center justify-center text-center">
+              <div className="text-blue-300 text-xs font-medium mb-1">平均バットスピード</div>
+              <div className="text-2xl font-extrabold text-white">{teamStats.teamAvgBatSpeed} <span className="text-xs text-blue-400 font-normal">mph</span></div>
+            </div>
+            <div className="bg-green-900/30 border border-green-800/50 rounded-xl p-4 flex flex-col items-center justify-center text-center">
+              <div className="text-green-300 text-xs font-medium mb-1">平均アッパースイング度</div>
+              <div className="text-2xl font-extrabold text-white">{teamStats.teamAvgAttackAngle} <span className="text-xs text-green-400 font-normal">°</span></div>
+            </div>
+            <div className="bg-emerald-900/30 border border-emerald-800/50 rounded-xl p-4 flex flex-col items-center justify-center text-center">
+              <div className="text-emerald-300 text-xs font-medium mb-1">平均打球速度</div>
+              <div className="text-2xl font-extrabold text-white">{teamStats.teamAvgExitVelo} <span className="text-xs text-emerald-400 font-normal">mph</span></div>
+            </div>
+            <div className="bg-purple-900/30 border border-purple-800/50 rounded-xl p-4 flex flex-col items-center justify-center text-center">
+              <div className="text-purple-300 text-xs font-medium mb-1">平均打球角度</div>
+              <div className="text-2xl font-extrabold text-white">{teamStats.teamAvgLaunchAngle} <span className="text-xs text-purple-400 font-normal">°</span></div>
             </div>
           </div>
 
@@ -213,7 +281,8 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
                       <th className="px-4 py-3">データ数</th>
                       <th className="px-4 py-3 text-blue-400">平均バットスピード</th>
                       <th className="px-4 py-3 text-green-400">平均アッパー度</th>
-                      <th className="px-4 py-3">平均打球速度</th>
+                      <th className="px-4 py-3 text-emerald-400">平均打球速度</th>
+                      <th className="px-4 py-3 text-purple-400">平均打球角度</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -221,9 +290,10 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
                       <tr key={i} className="border-b border-slate-700 hover:bg-slate-700/50 transition-colors">
                         <td className="px-4 py-3 font-medium text-white">{p.player}</td>
                         <td className="px-4 py-3">{p.swings}</td>
-                        <td className="px-4 py-3 font-bold">{p.avgBatSpeed.toFixed(1)}</td>
-                        <td className="px-4 py-3 font-bold">{p.avgAttackAngle.toFixed(1)}°</td>
-                        <td className="px-4 py-3">{p.avgExitVelo.toFixed(1)}</td>
+                        <td className="px-4 py-3 font-bold text-blue-300">{p.avgBatSpeed.toFixed(1)}</td>
+                        <td className="px-4 py-3 font-bold text-green-300">{p.avgAttackAngle.toFixed(1)}°</td>
+                        <td className="px-4 py-3 font-bold text-emerald-300">{p.avgExitVelo.toFixed(1)}</td>
+                        <td className="px-4 py-3 font-bold text-purple-300">{p.avgLaunchAngle.toFixed(1)}°</td>
                       </tr>
                     ))}
                   </tbody>
