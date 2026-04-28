@@ -49,8 +49,8 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
           query = query.eq('team_id', profile?.team_id);
         }
 
-        // Fetch first 50,000 rows (Supabase default limit is 1000)
-        const { data: rows, error } = await query.range(0, 49999);
+        // 修正: 確実に5万件取得できるようrangeを明示
+        const { data: rows, error } = await query.range(0, 49999).order('created_at', { ascending: false });
         if (error || !rows) return;
 
         // Group rows by file_name
