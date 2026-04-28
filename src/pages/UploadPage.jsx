@@ -14,12 +14,11 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
       const grouped = { savant: [], blast: [], combined: [] };
 
       // 1. Fetch from Unified Table (Small files)
-      let unifiedQuery = client.from('baseball_data').select('*');
-      if (profile?.role !== 'admin') {
-        unifiedQuery = unifiedQuery.eq('team_id', profile?.team_id);
-      }
-      // 修正: デフォルトの1000件制限を解除し、最大5万件取得できるように設定
-      const { data: unifiedData } = await unifiedQuery.range(0, 49999);
+      const { data: unifiedData, error: unifiedError } = await client
+        .from('baseball_data')
+        .select('*')
+        .eq('team_id', profile?.role !== 'admin' ? profile?.team_id : '*') // Simplified logic for chaining
+        .limit(50000);
       
       if (unifiedData) {
         unifiedData.forEach(item => {
@@ -44,13 +43,12 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
       const fetchSpecialized = async (tableName, type) => {
         let query = client.from(tableName).select('*');
         
-        // Filter by team unless admin
         if (profile?.role !== 'admin') {
           query = query.eq('team_id', profile?.team_id);
         }
 
-        // 修正: 確実に5万件取得できるようrangeを明示
-        const { data: rows, error } = await query.range(0, 49999).order('created_at', { ascending: false });
+        // 修正: limit(50000) を直接指定して確実に取得
+        const { data: rows, error } = await query.limit(50000).order('created_at', { ascending: false });
         if (error || !rows) return;
 
         // Group rows by file_name
