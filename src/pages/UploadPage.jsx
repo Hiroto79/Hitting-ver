@@ -13,15 +13,50 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
     try {
       const grouped = { savant: [], blast: [], combined: [] };
 
-      // 1. Fetch from Unified Table (Small files)
-      const { data: unifiedData, error: unifiedError } = await client
-        .from('baseball_data')
-        .select('*')
-        .eq('team_id', profile?.role !== 'admin' ? profile?.team_id : '*') // Simplified logic for chaining
-        .limit(50000);
+      // 再帰的にすべての行を取得するためのヘルパー関数
+      const fetchAllRows = async (tableName, teamIdFilter = null) => {
+        let allRows = [];
+        let from = 0;
+        let to = 999;
+        let hasMore = true;
+
+        while (hasMore) {
+          let query = client.from(tableName).select('*').range(from, to).order('created_at', { ascending: false });
+          if (teamIdFilter) {
+            query = query.eq('team_id', teamIdFilter);
+          }
+
+          const { data, error } = await query;
+          if (error) {
+            console.error(`Error fetching ${tableName}:`, error);
+            hasMore = false;
+            break;
+          }
+
+          if (data && data.length > 0) {
+            allRows = [...allRows, ...data];
+            if (data.length < 1000) {
+              hasMore = false; // これ以上データがない
+            } else {
+              from += 1000;
+              to += 1000;
+            }
+          } else {
+            hasMore = false;
+          }
+          
+          // 安全のため5万件で停止
+          if (allRows.length >= 50000) hasMore = false;
+        }
+        return allRows;
+      };
+
+      // 1. Fetch from Unified Table
+      const teamId = profile?.role !== 'admin' ? profile?.team_id : null;
+      const unifiedDataRows = await fetchAllRows('baseball_data', teamId);
       
-      if (unifiedData) {
-        unifiedData.forEach(item => {
+      if (unifiedDataRows) {
+        unifiedDataRows.forEach(item => {
           let parsedData = [];
           if (item.data) {
             try {
@@ -39,17 +74,12 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
         });
       }
 
-      // 2. Fetch from Specialized Tables (Large files - grouped by filename)
+      // 2. Fetch from Specialized Tables
       const fetchSpecialized = async (tableName, type) => {
-        let query = client.from(tableName).select('*');
+        const teamId = profile?.role !== 'admin' ? profile?.team_id : null;
+        const rows = await fetchAllRows(tableName, teamId);
         
-        if (profile?.role !== 'admin') {
-          query = query.eq('team_id', profile?.team_id);
-        }
-
-        // 修正: limit(50000) を直接指定して確実に取得
-        const { data: rows, error } = await query.limit(50000).order('created_at', { ascending: false });
-        if (error || !rows) return;
+        if (!rows || rows.length === 0) return;
 
         // Group rows by file_name
         const filesMap = {};
