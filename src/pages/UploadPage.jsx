@@ -13,38 +13,47 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
     try {
       const grouped = { savant: [], blast: [], combined: [] };
 
-      // 順次（シーケンシャル）にすべての行を確実に取得するためのヘルパー関数
+      // 5000件ずつ（1000件×5並列）を確実に取得するためのヘルパー関数
       const fetchAllRows = async (tableName, teamIdFilter = null) => {
         if (!teamIdFilter && profile?.role !== 'admin') return [];
 
         let allRows = [];
-        let from = 0;
-        let to = 999;
+        let offset = 0;
         let hasMore = true;
+        const CHUNK_SIZE = 5; // 5並列 (5000件分)
 
-        // サーバー負荷を考慮し、1000件ずつ順番に取得（時間はかかるが確実）
         while (hasMore) {
-          let query = client.from(tableName).select('*').range(from, to).order('created_at', { ascending: false });
-          if (teamIdFilter) query = query.eq('team_id', teamIdFilter);
-
-          const { data, error } = await query;
-          if (error) {
-            console.error(`Error fetching ${tableName}:`, error);
-            break;
+          const promises = [];
+          for (let i = 0; i < CHUNK_SIZE; i++) {
+            const from = offset + (i * 1000);
+            const to = from + 999;
+            let query = client.from(tableName).select('*').range(from, to).order('created_at', { ascending: false });
+            if (teamIdFilter) query = query.eq('team_id', teamIdFilter);
+            promises.push(query);
           }
 
-          if (data && data.length > 0) {
-            allRows = [...allRows, ...data];
-            if (data.length < 1000) {
-              hasMore = false;
+          const results = await Promise.all(promises);
+          let addedInThisBatch = 0;
+          
+          for (const res of results) {
+            const data = res.data || [];
+            if (data.length > 0) {
+              allRows = [...allRows, ...data];
+              addedInThisBatch += data.length;
+              if (data.length < 1000) {
+                hasMore = false;
+                break;
+              }
             } else {
-              from += 1000;
-              to += 1000;
+              hasMore = false;
+              break;
             }
-          } else {
-            hasMore = false;
           }
 
+          if (hasMore) {
+            offset += (CHUNK_SIZE * 1000);
+          }
+          
           // 最大上限
           if (allRows.length >= 60000) hasMore = false;
         }
