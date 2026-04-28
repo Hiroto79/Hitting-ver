@@ -74,19 +74,32 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
         const rows = await fetchAllRows(tableName, myTeamId);
         if (!rows || rows.length === 0) return;
 
+        // 1. ファイル名ごとに「最新のアップロードID」を特定する
+        const latestUploadIds = {};
+        rows.forEach(row => {
+          const name = row.file_name || '不明なファイル';
+          // order by created_at desc なので、最初に見つかったものが最新
+          if (!latestUploadIds[name]) {
+            latestUploadIds[name] = row.upload_id;
+          }
+        });
+
+        // 2. 最新のアップロードIDに一致するデータのみを抽出してグルーピング
         const filesMap = {};
         rows.forEach(row => {
           const name = row.file_name || '不明なファイル';
-          // 最新のデータを保持（order by created_at desc なので最初に来るのが最新）
-          if (!filesMap[name]) {
-            filesMap[name] = {
-              id: row.upload_id || `legacy-${name}`,
-              filename: name,
-              headers: Object.keys(row).filter(k => !['id', 'created_at', 'file_name', 'upload_id', 'team_id', 'owner_id', 'updated_at'].includes(k)),
-              data: []
-            };
+          // そのファイルの最新アップロード分のみを採用
+          if (row.upload_id === latestUploadIds[name]) {
+            if (!filesMap[name]) {
+              filesMap[name] = {
+                id: row.upload_id,
+                filename: name,
+                headers: Object.keys(row).filter(k => !['id', 'created_at', 'file_name', 'upload_id', 'team_id', 'owner_id', 'updated_at'].includes(k)),
+                data: []
+              };
+            }
+            filesMap[name].data.push(row);
           }
-          filesMap[name].data.push(row);
         });
 
         Object.values(filesMap).forEach(file => grouped[type].push(file));
