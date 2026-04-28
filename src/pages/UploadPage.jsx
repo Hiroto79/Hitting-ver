@@ -13,41 +13,33 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
     try {
       const grouped = { savant: [], blast: [], combined: [] };
 
-      // 再帰的にすべての行を取得するためのヘルパー関数
+      // 並列ですべての行を高速に取得するためのヘルパー関数
       const fetchAllRows = async (tableName, teamIdFilter = null) => {
-        let allRows = [];
-        let from = 0;
-        let to = 999;
-        let hasMore = true;
+        // 1. まず総件数を取得
+        let countQuery = client.from(tableName).select('*', { count: 'exact', head: true });
+        if (teamIdFilter) countQuery = countQuery.eq('team_id', teamIdFilter);
+        
+        const { count, error: countError } = await countQuery;
+        if (countError || count === 0) return [];
 
-        while (hasMore) {
+        const totalCount = Math.min(count, 50000); // 最大5万件
+        const pageSize = 1000;
+        const pageCount = Math.ceil(totalCount / pageSize);
+        
+        // 2. ページごとのリクエストを並列で作成
+        const promises = [];
+        for (let i = 0; i < pageCount; i++) {
+          const from = i * pageSize;
+          const to = from + pageSize - 1;
           let query = client.from(tableName).select('*').range(from, to).order('created_at', { ascending: false });
-          if (teamIdFilter) {
-            query = query.eq('team_id', teamIdFilter);
-          }
-
-          const { data, error } = await query;
-          if (error) {
-            console.error(`Error fetching ${tableName}:`, error);
-            hasMore = false;
-            break;
-          }
-
-          if (data && data.length > 0) {
-            allRows = [...allRows, ...data];
-            if (data.length < 1000) {
-              hasMore = false; // これ以上データがない
-            } else {
-              from += 1000;
-              to += 1000;
-            }
-          } else {
-            hasMore = false;
-          }
-          
-          // 安全のため5万件で停止
-          if (allRows.length >= 50000) hasMore = false;
+          if (teamIdFilter) query = query.eq('team_id', teamIdFilter);
+          promises.push(query);
         }
+
+        // 3. すべて一気に実行
+        const results = await Promise.all(promises);
+        const allRows = results.flatMap(res => res.data || []);
+        
         return allRows;
       };
 
