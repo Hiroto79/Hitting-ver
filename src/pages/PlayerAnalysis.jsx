@@ -25,6 +25,10 @@ function PlayerAnalysis({ savantData, blastData, initialPlayer, initialTeam }) {
       if (initialTeam && grouped[initialTeam]) {
         const teamPlayers = Object.keys(grouped[initialTeam]).sort();
         setPlayers(teamPlayers);
+        // Also ensure selectedPlayer is set if initialPlayer exists
+        if (initialPlayer && grouped[initialTeam][initialPlayer]) {
+          setSelectedPlayer(initialPlayer);
+        }
       }
     }
   }, [savantData, nameKey, initialTeam]);
@@ -33,13 +37,22 @@ function PlayerAnalysis({ savantData, blastData, initialPlayer, initialTeam }) {
     if (selectedTeam && groupedData[selectedTeam]) {
       const teamPlayers = Object.keys(groupedData[selectedTeam]).sort();
       setPlayers(teamPlayers);
-      setSelectedPlayer('');
-      setPlayerStats(null);
+      
+      // 修正: すでに選択されている選手が新しいチームリストに含まれている場合は、リセットしない
+      if (selectedPlayer && teamPlayers.includes(selectedPlayer)) {
+        // 保持
+      } else if (initialPlayer && teamPlayers.includes(initialPlayer)) {
+        // 初期値があればそれを優先
+        setSelectedPlayer(initialPlayer);
+      } else {
+        setSelectedPlayer('');
+        setPlayerStats(null);
+      }
     }
-  }, [selectedTeam, groupedData]);
+  }, [selectedTeam, groupedData, initialPlayer]);
 
   useEffect(() => {
-    if (selectedPlayer && selectedTeam && groupedData[selectedTeam][selectedPlayer]) {
+    if (selectedPlayer && selectedTeam && groupedData[selectedTeam] && groupedData[selectedTeam][selectedPlayer]) {
       const events = groupedData[selectedTeam][selectedPlayer];
       setPlayerStats({
         savantEvents: events,
