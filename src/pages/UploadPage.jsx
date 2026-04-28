@@ -13,34 +13,42 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
     try {
       const grouped = { savant: [], blast: [], combined: [] };
 
-      // 並列ですべての行を高速に取得するためのヘルパー関数
+      // 順次（シーケンシャル）にすべての行を確実に取得するためのヘルパー関数
       const fetchAllRows = async (tableName, teamIdFilter = null) => {
-        // フィルタがない場合は取得しない（全件取得事故防止）
         if (!teamIdFilter && profile?.role !== 'admin') return [];
 
-        // 1. まず総件数を取得
-        let countQuery = client.from(tableName).select('*', { count: 'exact', head: true });
-        if (teamIdFilter) countQuery = countQuery.eq('team_id', teamIdFilter);
-        
-        const { count, error: countError } = await countQuery;
-        if (countError || count === 0) return [];
+        let allRows = [];
+        let from = 0;
+        let to = 999;
+        let hasMore = true;
 
-        const totalCount = Math.min(count, 50000); // 最大5万件
-        const pageSize = 1000;
-        const pageCount = Math.ceil(totalCount / pageSize);
-        
-        // 2. ページごとのリクエストを並列で作成
-        const promises = [];
-        for (let i = 0; i < pageCount; i++) {
-          const from = i * pageSize;
-          const to = from + pageSize - 1;
+        // サーバー負荷を考慮し、1000件ずつ順番に取得（時間はかかるが確実）
+        while (hasMore) {
           let query = client.from(tableName).select('*').range(from, to).order('created_at', { ascending: false });
           if (teamIdFilter) query = query.eq('team_id', teamIdFilter);
-          promises.push(query);
-        }
 
-        const results = await Promise.all(promises);
-        return results.flatMap(res => res.data || []);
+          const { data, error } = await query;
+          if (error) {
+            console.error(`Error fetching ${tableName}:`, error);
+            break;
+          }
+
+          if (data && data.length > 0) {
+            allRows = [...allRows, ...data];
+            if (data.length < 1000) {
+              hasMore = false;
+            } else {
+              from += 1000;
+              to += 1000;
+            }
+          } else {
+            hasMore = false;
+          }
+
+          // 最大上限
+          if (allRows.length >= 60000) hasMore = false;
+        }
+        return allRows;
       };
 
       // 1. Fetch from Unified Table
