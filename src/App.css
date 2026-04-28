@@ -332,19 +332,33 @@ h2, h3, h4 {
 
 /* Print Styles for PDF Export */
 @media print {
+  @page {
+    margin: 1cm;
+  }
+  
   body {
-    background-color: var(--bg-dark) !important;
-    color: var(--text-main) !important;
+    background-color: #0f172a !important; /* Keep dark background for premium feel */
+    color: white !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
   
-  /* Hide UI elements that shouldn't be in the PDF */
+  /* Hide EVERY UI element that shouldn't be in the PDF */
+  .no-print,
   .sidebar-overlay,
-  .lg\:hidden.fixed.top-0, /* Mobile header */
-  aside, /* Sidebar */
-  button {
+  nav,
+  aside,
+  header,
+  button,
+  input,
+  [role="button"],
+  .fixed.top-0, /* Mobile header */
+  .w-64 { /* Sidebar container */
     display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
   
   .main-layout {
@@ -355,13 +369,25 @@ h2, h3, h4 {
   
   .content-area {
     padding: 0 !important;
+    margin: 0 !important;
     overflow: visible !important;
-    margin-left: 0 !important;
     width: 100% !important;
+    position: static !important;
   }
   
-  /* Force dark backgrounds to render */
-  .bg-slate-800, .bg-slate-900, .bg-slate-950, .bg-gray-800 {
+  .max-container {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  
+  /* Ensure grids stack nicely or stay together */
+  .grid {
+    gap: 1rem !important;
+  }
+  
+  /* Force dark cards to render with borders */
+  .bg-slate-800, .bg-slate-900, .bg-gray-900 {
     background-color: #1e293b !important;
     border: 1px solid #334155 !important;
   }
@@ -370,10 +396,10 @@ h2, h3, h4 {
   .grid > div {
     break-inside: avoid;
     page-break-inside: avoid;
+    margin-bottom: 1rem !important;
   }
   
-  /* Ensure charts fit on the page */
   .recharts-responsive-container {
-    max-height: 400px !important;
+    max-height: 350px !important;
   }
 }

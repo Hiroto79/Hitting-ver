@@ -23,9 +23,17 @@ function CloudDataManager({ updateDataState, profile }) {
       const { data: unifiedData, error: unifiedError } = await query;
       
       // 2. Fetch from legacy tables (optional/fallback)
-      // Note: We only do this to show the user that their old data exists
-      const { data: savantLegacy } = await client.from('savant_data').select('file_name, created_at').limit(1000);
-      const { data: blastLegacy } = await client.from('blast_data').select('file_name, created_at').limit(1000);
+      // We increase limit to ensure we see unique filenames even in large tables
+      let savantLegacyQuery = client.from('savant_data').select('file_name, created_at');
+      let blastLegacyQuery = client.from('blast_data').select('file_name, created_at');
+      
+      if (profile && profile.role !== 'admin' && profile.team_id) {
+        savantLegacyQuery = savantLegacyQuery.eq('team_id', profile.team_id);
+        blastLegacyQuery = blastLegacyQuery.eq('team_id', profile.team_id);
+      }
+      
+      const { data: savantLegacy } = await savantLegacyQuery.range(0, 49999);
+      const { data: blastLegacy } = await blastLegacyQuery.range(0, 49999);
 
       // Process legacy data into a similar format
       const processedLegacy = [];

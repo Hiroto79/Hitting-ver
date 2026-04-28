@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { extractTeams, extractPlayersByTeam, getPlayerStats, calculateAverages, groupEventsByTeamAndPlayer, parseNumeric } from '../utils/dataHelpers';
-import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, LabelList } from 'recharts';
-import { Users, TrendingUp } from 'lucide-react';
+import { extractTeams, extractPlayersByTeam, getPlayerStats, calculateAverages, calculateMax, groupEventsByTeamAndPlayer, parseNumeric } from '../utils/dataHelpers';
+import { ScatterChart, Scatter, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, LabelList } from 'recharts';
+import { Users, TrendingUp, Zap, BarChart3, Eye } from 'lucide-react';
 
-function TeamAnalysis({ savantData, blastData, combinedData }) {
+function TeamAnalysis({ savantData, blastData, combinedData, onViewPlayer }) {
   const [sourceType, setSourceType] = useState('savant');
   const activeData = sourceType === 'savant' ? savantData : sourceType === 'blast' ? blastData : combinedData;
   
@@ -47,11 +47,25 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
           return passHits && passLa;
         });
 
+        const MPH_TO_KMH = 1.60934;
+        
+        const rawAvgBatSpeed = Number(calculateAverages(filteredEvents, 'bat_speed'));
+        const avgBatSpeed = rawAvgBatSpeed > 0 && rawAvgBatSpeed < 100 ? rawAvgBatSpeed * MPH_TO_KMH : rawAvgBatSpeed;
+        const rawMaxBatSpeed = Number(calculateMax(filteredEvents, 'bat_speed'));
+        const maxBatSpeed = rawMaxBatSpeed > 0 && rawMaxBatSpeed < 100 ? rawMaxBatSpeed * MPH_TO_KMH : rawMaxBatSpeed;
+        
+        const rawAvgExitVelo = Number(calculateAverages(filteredEvents, 'launch_speed'));
+        const avgExitVelo = rawAvgExitVelo > 0 && rawAvgExitVelo < 130 ? rawAvgExitVelo * MPH_TO_KMH : rawAvgExitVelo;
+        const rawMaxExitVelo = Number(calculateMax(filteredEvents, 'launch_speed'));
+        const maxExitVelo = rawMaxExitVelo > 0 && rawMaxExitVelo < 130 ? rawMaxExitVelo * MPH_TO_KMH : rawMaxExitVelo;
+
         return {
           player,
-          avgBatSpeed: Number(calculateAverages(filteredEvents, 'bat_speed')),
+          avgBatSpeed,
+          maxBatSpeed,
           avgAttackAngle: Number(calculateAverages(filteredEvents, 'attack_angle')),
-          avgExitVelo: Number(calculateAverages(filteredEvents, 'launch_speed')),
+          avgExitVelo,
+          maxExitVelo,
           avgLaunchAngle: Number(calculateAverages(filteredEvents, 'launch_angle')),
           swings: filteredEvents.length
         };
@@ -251,7 +265,7 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-blue-900/30 border border-blue-800/50 rounded-xl p-4 flex flex-col items-center justify-center text-center">
               <div className="text-blue-300 text-xs font-medium mb-1">平均バットスピード</div>
-              <div className="text-2xl font-extrabold text-white">{teamStats.teamAvgBatSpeed} <span className="text-xs text-blue-400 font-normal">mph</span></div>
+              <div className="text-2xl font-extrabold text-white">{teamStats.teamAvgBatSpeed} <span className="text-xs text-blue-400 font-normal">km/h</span></div>
             </div>
             <div className="bg-green-900/30 border border-green-800/50 rounded-xl p-4 flex flex-col items-center justify-center text-center">
               <div className="text-green-300 text-xs font-medium mb-1">平均アッパースイング度</div>
@@ -259,7 +273,7 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
             </div>
             <div className="bg-emerald-900/30 border border-emerald-800/50 rounded-xl p-4 flex flex-col items-center justify-center text-center">
               <div className="text-emerald-300 text-xs font-medium mb-1">平均打球速度</div>
-              <div className="text-2xl font-extrabold text-white">{teamStats.teamAvgExitVelo} <span className="text-xs text-emerald-400 font-normal">mph</span></div>
+              <div className="text-2xl font-extrabold text-white">{teamStats.teamAvgExitVelo} <span className="text-xs text-emerald-400 font-normal">km/h</span></div>
             </div>
             <div className="bg-purple-900/30 border border-purple-800/50 rounded-xl p-4 flex flex-col items-center justify-center text-center">
               <div className="text-purple-300 text-xs font-medium mb-1">平均打球角度</div>
@@ -280,9 +294,12 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
                       <th className="px-4 py-3">選手名</th>
                       <th className="px-4 py-3">データ数</th>
                       <th className="px-4 py-3 text-blue-400">平均バットスピード</th>
+                      <th className="px-4 py-3 text-blue-300">最大バットスピード</th>
                       <th className="px-4 py-3 text-green-400">平均アッパー度</th>
                       <th className="px-4 py-3 text-emerald-400">平均打球速度</th>
+                      <th className="px-4 py-3 text-emerald-300">最大打球速度</th>
                       <th className="px-4 py-3 text-purple-400">平均打球角度</th>
+                      <th className="px-4 py-3 text-right">アクション</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -291,23 +308,73 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
                         <td className="px-4 py-3 font-medium text-white">{p.player}</td>
                         <td className="px-4 py-3">{p.swings}</td>
                         <td className="px-4 py-3 font-bold text-blue-300">{p.avgBatSpeed.toFixed(1)}</td>
+                        <td className="px-4 py-3 font-bold text-blue-200">{p.maxBatSpeed.toFixed(1)}</td>
                         <td className="px-4 py-3 font-bold text-green-300">{p.avgAttackAngle.toFixed(1)}°</td>
                         <td className="px-4 py-3 font-bold text-emerald-300">{p.avgExitVelo.toFixed(1)}</td>
+                        <td className="px-4 py-3 font-bold text-emerald-200">{p.maxExitVelo.toFixed(1)}</td>
                         <td className="px-4 py-3 font-bold text-purple-300">{p.avgLaunchAngle.toFixed(1)}°</td>
+                        <td className="px-4 py-3 text-right">
+                          <button 
+                            onClick={() => onViewPlayer(p.player, selectedTeam)}
+                            className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition-colors shadow-lg flex items-center ml-auto"
+                          >
+                            <BarChart3 className="w-3 h-3 mr-1" />レポート表示
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
+          </div>
 
-            <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 md:p-8 shadow-2xl flex flex-col" style={{height: 'clamp(320px, 50vw, 600px)'}}>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-lg">
+              <div className="p-4 bg-slate-900 border-b border-slate-700 flex items-center">
+                <Zap className="w-5 h-5 text-blue-400 mr-2" />
+                <h3 className="font-bold text-white">最大バットスピード & 打球速度 比較</h3>
+              </div>
+              <div className="p-4" style={{ height: '400px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={teamStats.players} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                    <XAxis dataKey="player" stroke="#94a3b8" fontSize={10} interval={0} angle={-45} textAnchor="end" />
+                    <YAxis stroke="#94a3b8" fontSize={10} unit="km/h" />
+                    <Tooltip 
+                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                          return (
+                            <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-sm">
+                              <p className="font-bold text-white mb-2 border-b border-slate-700 pb-1">{label}</p>
+                              {payload.map((entry, index) => (
+                                <p key={index} style={{ color: entry.color }} className="flex justify-between gap-4">
+                                  <span>{entry.name}:</span>
+                                  <span className="text-white font-mono">{Number(entry.value).toFixed(1)} km/h</span>
+                                </p>
+                              ))}
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Legend verticalAlign="top" height={36}/>
+                    <Bar dataKey="maxBatSpeed" name="最大バットスピード" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="maxExitVelo" name="最大打球速度" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 md:p-8 shadow-2xl flex flex-col" style={{height: '400px'}}>
               <h3 className="font-bold text-white mb-4 text-center">バットスピード vs アッパースイング度 (チーム内分布)</h3>
               <div className="flex-1">
                 <ResponsiveContainer width="100%" height="100%">
                   <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis type="number" dataKey="avgBatSpeed" name="Bat Speed" unit="mph" stroke="#94a3b8" domain={['auto', 'auto']} />
+                    <XAxis type="number" dataKey="avgBatSpeed" name="Bat Speed" unit="km/h" stroke="#94a3b8" domain={['auto', 'auto']} />
                     <YAxis type="number" dataKey="avgAttackAngle" name="Attack Angle" unit="°" stroke="#94a3b8" domain={['auto', 'auto']} />
                     <Tooltip 
                       cursor={{ strokeDasharray: '3 3' }} 
@@ -317,7 +384,7 @@ function TeamAnalysis({ savantData, blastData, combinedData }) {
                           return (
                             <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-sm">
                               <p className="font-bold text-white mb-1 border-b border-slate-700 pb-1">{data.player}</p>
-                              <p className="text-blue-400">平均バットスピード: <span className="text-white font-mono">{data.avgBatSpeed.toFixed(1)} mph</span></p>
+                              <p className="text-blue-400">平均バットスピード: <span className="text-white font-mono">{data.avgBatSpeed.toFixed(1)} km/h</span></p>
                               <p className="text-green-400">平均アッパー度: <span className="text-white font-mono">{data.avgAttackAngle.toFixed(1)}°</span></p>
                               <p className="text-slate-400 text-xs mt-1">スイング数: {data.swings}</p>
                             </div>

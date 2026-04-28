@@ -20,6 +20,7 @@ function App() {
   const [combinedFiles, setCombinedFiles] = useState([]);
   const [activeView, setActiveView] = useState('upload');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [analysisState, setAnalysisState] = useState({ team: '', player: '' });
 
   // Auth state
   const [user, setUser] = useState(null);
@@ -241,8 +242,8 @@ function App() {
     };
     switch (activeView) {
       case 'upload':   return <UploadPage {...uploadProps} />;
-      case 'team':     return <TeamAnalysis savantData={savantData} blastData={blastData} combinedData={combinedData} />;
-      case 'player':   return <PlayerAnalysis savantData={savantData} blastData={blastData} combinedData={combinedData} />;
+      case 'team':     return <TeamAnalysis savantData={savantData} blastData={blastData} combinedData={combinedData} onViewPlayer={(player, team) => { setAnalysisState({ player, team }); setActiveView('player'); }} />;
+      case 'player':   return <PlayerAnalysis savantData={savantData} blastData={blastData} initialPlayer={analysisState.player} initialTeam={analysisState.team} />;
       case 'game':     return <GameStats savantData={savantData} blastData={blastData} combinedData={combinedData} />;
       case 'custom':   return <CustomCharts savantData={savantData} blastData={blastData} combinedData={combinedData} />;
       case 'cloud':    return <CloudDataManager updateDataState={updateDataState} profile={profile} />;

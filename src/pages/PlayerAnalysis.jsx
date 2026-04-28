@@ -3,12 +3,12 @@ import { extractTeams, extractPlayersByTeam, getPlayerStats, groupEventsByTeamAn
 import PlayerProfile from '../components/PlayerProfile';
 import { Users, User, Settings2 } from 'lucide-react';
 
-function PlayerAnalysis({ savantData, blastData }) {
+function PlayerAnalysis({ savantData, blastData, initialPlayer, initialTeam }) {
   const [teams, setTeams] = useState([]);
-  const [selectedTeam, setSelectedTeam] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState(initialTeam || '');
   
   const [players, setPlayers] = useState([]);
-  const [selectedPlayer, setSelectedPlayer] = useState('');
+  const [selectedPlayer, setSelectedPlayer] = useState(initialPlayer || '');
   
   const [playerStats, setPlayerStats] = useState(null);
   const [nameKey, setNameKey] = useState('player_name');
@@ -20,8 +20,14 @@ function PlayerAnalysis({ savantData, blastData }) {
       const grouped = groupEventsByTeamAndPlayer(savantData.data, nameKey);
       setGroupedData(grouped);
       setTeams(Object.keys(grouped).sort());
+      
+      // If we have an initial team, ensure players list is updated
+      if (initialTeam && grouped[initialTeam]) {
+        const teamPlayers = Object.keys(grouped[initialTeam]).sort();
+        setPlayers(teamPlayers);
+      }
     }
-  }, [savantData, nameKey]);
+  }, [savantData, nameKey, initialTeam]);
 
   useEffect(() => {
     if (selectedTeam && groupedData[selectedTeam]) {
