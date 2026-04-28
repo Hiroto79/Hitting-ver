@@ -15,6 +15,9 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
 
       // 並列ですべての行を高速に取得するためのヘルパー関数
       const fetchAllRows = async (tableName, teamIdFilter = null) => {
+        // フィルタがない場合は取得しない（全件取得事故防止）
+        if (!teamIdFilter && profile?.role !== 'admin') return [];
+
         // 1. まず総件数を取得
         let countQuery = client.from(tableName).select('*', { count: 'exact', head: true });
         if (teamIdFilter) countQuery = countQuery.eq('team_id', teamIdFilter);
@@ -36,16 +39,13 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
           promises.push(query);
         }
 
-        // 3. すべて一気に実行
         const results = await Promise.all(promises);
-        const allRows = results.flatMap(res => res.data || []);
-        
-        return allRows;
+        return results.flatMap(res => res.data || []);
       };
 
       // 1. Fetch from Unified Table
-      const teamId = profile?.role !== 'admin' ? profile?.team_id : null;
-      const unifiedDataRows = await fetchAllRows('baseball_data', teamId);
+      const myTeamId = profile?.team_id;
+      const unifiedDataRows = await fetchAllRows('baseball_data', myTeamId);
       
       if (unifiedDataRows) {
         unifiedDataRows.forEach(item => {
@@ -61,22 +61,23 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
             } catch (e) { console.error(e); }
           }
           if (grouped[item.type]) {
-            grouped[item.type].push({ id: item.id, filename: item.filename, headers: item.headers, data: parsedData, is_csv: true });
+            // 重複チェック: 同じIDやファイル名がすでにある場合は追加しない
+            if (!grouped[item.type].find(f => f.filename === item.filename)) {
+              grouped[item.type].push({ id: item.id, filename: item.filename, headers: item.headers, data: parsedData, is_csv: true });
+            }
           }
         });
       }
 
       // 2. Fetch from Specialized Tables
       const fetchSpecialized = async (tableName, type) => {
-        const teamId = profile?.role !== 'admin' ? profile?.team_id : null;
-        const rows = await fetchAllRows(tableName, teamId);
-        
+        const rows = await fetchAllRows(tableName, myTeamId);
         if (!rows || rows.length === 0) return;
 
-        // Group rows by file_name
         const filesMap = {};
         rows.forEach(row => {
           const name = row.file_name || '不明なファイル';
+          // 最新のデータを保持（order by created_at desc なので最初に来るのが最新）
           if (!filesMap[name]) {
             filesMap[name] = {
               id: row.upload_id || `legacy-${name}`,
