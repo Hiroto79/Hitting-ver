@@ -18,7 +18,8 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
       if (profile?.role !== 'admin') {
         unifiedQuery = unifiedQuery.eq('team_id', profile?.team_id);
       }
-      const { data: unifiedData } = await unifiedQuery;
+      // 修正: デフォルトの1000件制限を解除し、最大5万件取得できるように設定
+      const { data: unifiedData } = await unifiedQuery.range(0, 49999);
       
       if (unifiedData) {
         unifiedData.forEach(item => {
