@@ -13,14 +13,14 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
     try {
       const grouped = { savant: [], blast: [], combined: [] };
 
-      // 5000件ずつ（1000件×5並列）を確実に取得するためのヘルパー関数
+      // 100000件まで確実に取得するためのヘルパー関数
       const fetchAllRows = async (tableName, teamIdFilter = null) => {
         if (!teamIdFilter && profile?.role !== 'admin') return [];
 
         let allRows = [];
         let offset = 0;
         let hasMore = true;
-        const CHUNK_SIZE = 5; // 5並列 (5000件分)
+        const CHUNK_SIZE = 5; // 5並列
 
         while (hasMore) {
           const promises = [];
@@ -33,13 +33,11 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
           }
 
           const results = await Promise.all(promises);
-          let addedInThisBatch = 0;
           
           for (const res of results) {
             const data = res.data || [];
             if (data.length > 0) {
               allRows = [...allRows, ...data];
-              addedInThisBatch += data.length;
               if (data.length < 1000) {
                 hasMore = false;
                 break;
@@ -54,8 +52,8 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
             offset += (CHUNK_SIZE * 1000);
           }
           
-          // 最大上限
-          if (allRows.length >= 60000) hasMore = false;
+          // 上限を10万件に引き上げ
+          if (allRows.length >= 100000) hasMore = false;
         }
         return allRows;
       };
@@ -78,10 +76,7 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
             } catch (e) { console.error(e); }
           }
           if (grouped[item.type]) {
-            // 重複チェック: 同じIDやファイル名がすでにある場合は追加しない
-            if (!grouped[item.type].find(f => f.filename === item.filename)) {
-              grouped[item.type].push({ id: item.id, filename: item.filename, headers: item.headers, data: parsedData, is_csv: true });
-            }
+            grouped[item.type].push({ id: item.id, filename: item.filename, headers: item.headers, data: parsedData, is_csv: true });
           }
         });
       }
@@ -91,32 +86,19 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
         const rows = await fetchAllRows(tableName, myTeamId);
         if (!rows || rows.length === 0) return;
 
-        // 1. ファイル名ごとに「最新のアップロードID」を特定する
-        const latestUploadIds = {};
-        rows.forEach(row => {
-          const name = row.file_name || '不明なファイル';
-          // order by created_at desc なので、最初に見つかったものが最新
-          if (!latestUploadIds[name]) {
-            latestUploadIds[name] = row.upload_id;
-          }
-        });
-
-        // 2. 最新のアップロードIDに一致するデータのみを抽出してグルーピング
         const filesMap = {};
         rows.forEach(row => {
           const name = row.file_name || '不明なファイル';
-          // そのファイルの最新アップロード分のみを採用
-          if (row.upload_id === latestUploadIds[name]) {
-            if (!filesMap[name]) {
-              filesMap[name] = {
-                id: row.upload_id,
-                filename: name,
-                headers: Object.keys(row).filter(k => !['id', 'created_at', 'file_name', 'upload_id', 'team_id', 'owner_id', 'updated_at'].includes(k)),
-                data: []
-              };
-            }
-            filesMap[name].data.push(row);
+          // 修正: 重複排除を完全に撤廃。見つかったデータはすべてそのまま追加
+          if (!filesMap[name]) {
+            filesMap[name] = {
+              id: row.upload_id || `file-${name}`,
+              filename: name,
+              headers: Object.keys(row).filter(k => !['id', 'created_at', 'file_name', 'upload_id', 'team_id', 'owner_id', 'updated_at'].includes(k)),
+              data: []
+            };
           }
+          filesMap[name].data.push(row);
         });
 
         Object.values(filesMap).forEach(file => grouped[type].push(file));
