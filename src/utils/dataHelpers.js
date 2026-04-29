@@ -121,10 +121,19 @@ export const groupEventsByTeamAndPlayer = (data, nameKey = 'player_name') => {
   if (!data || !Array.isArray(data)) return {};
   
   return data.reduce((acc, row) => {
-    const team = row.home_team || 'Unknown Team';
-    // 修正: 選手名が数値（ID）の場合でも文字列として扱い、正しくグループ化できるようにする
-    const rawName = row[nameKey];
-    const player = (rawName === null || rawName === undefined) ? 'Unknown Player' : String(rawName);
+    // チーム名の取得（最も確実な home_team を優先）
+    const team = row.home_team || row.away_team || 'Unknown Team';
+    
+    // 選手名の取得（数値IDの場合も確実に文字列にし、空の場合は Unknown としない工夫）
+    const rawVal = row[nameKey];
+    let player = 'Unknown Player';
+    
+    if (rawVal !== null && rawVal !== undefined && String(rawVal).trim() !== '') {
+      player = String(rawVal);
+    } else {
+      // 指定された列が空の場合、バックアップとして player_name や ID 列を探す
+      player = row.player_name || row.batter || row.pitcher || 'Unknown Player';
+    }
     
     if (!acc[team]) acc[team] = {};
     if (!acc[team][player]) acc[team][player] = [];

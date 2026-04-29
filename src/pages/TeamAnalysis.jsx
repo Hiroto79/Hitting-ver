@@ -136,9 +136,15 @@ function TeamAnalysis({ savantData, blastData, combinedData, onViewPlayer }) {
               onChange={(e) => setNameKey(e.target.value)}
               className="w-full bg-slate-900 border-2 border-blue-500/20 hover:border-blue-500/50 text-white rounded-xl p-4 focus:ring-4 focus:ring-blue-500/20 outline-none transition-all font-bold text-lg"
             >
-              {headers.map((h, idx) => (
-                <option key={idx} value={h}>{h}</option>
-              ))}
+              {/* 重要な列を優先的に上に表示し、それ以外もすべて表示する */}
+              {Array.from(new Set([
+                'player_name', 'pitcher_name', 'batter_name', 'batter', 'pitcher',
+                ...headers
+              ]))
+                .filter(h => headers.includes(h))
+                .map((h, idx) => (
+                  <option key={idx} value={h}>{h}</option>
+                ))}
             </select>
           </div>
 
