@@ -13,14 +13,14 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
     try {
       const grouped = { savant: [], blast: [], combined: [] };
 
-      // 100000件まで確実に取得するためのヘルパー関数
+      // すべての行を「意地でも」最後まで取得するためのヘルパー関数
       const fetchAllRows = async (tableName, teamIdFilter = null) => {
         if (!teamIdFilter && profile?.role !== 'admin') return [];
 
         let allRows = [];
         let offset = 0;
         let hasMore = true;
-        const CHUNK_SIZE = 5; // 5並列
+        const CHUNK_SIZE = 3; // 3並列に抑えて安定性を最大化
 
         while (hasMore) {
           const promises = [];
@@ -33,28 +33,33 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
           }
 
           const results = await Promise.all(promises);
+          let foundInThisBatch = 0;
           
           for (const res of results) {
             const data = res.data || [];
             if (data.length > 0) {
               allRows = [...allRows, ...data];
+              foundInThisBatch += data.length;
               if (data.length < 1000) {
-                hasMore = false;
-                break;
+                hasMore = false; // 最後のページに到達
               }
             } else {
-              hasMore = false;
+              hasMore = false; // データが空
               break;
             }
           }
 
-          if (hasMore) {
+          if (hasMore && foundInThisBatch > 0) {
             offset += (CHUNK_SIZE * 1000);
+          } else {
+            hasMore = false;
           }
           
-          // 上限を10万件に引き上げ
+          // 上限10万件
           if (allRows.length >= 100000) hasMore = false;
         }
+        
+        console.log(`Fetched total ${allRows.length} rows from ${tableName}`);
         return allRows;
       };
 
