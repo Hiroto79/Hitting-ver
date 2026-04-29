@@ -140,12 +140,10 @@ function App() {
     try {
       const dataArray = Array.isArray(dataObj.data) ? dataObj.data : [];
       const totalRows = dataArray.length;
-      const batchSize = 1000;
+      const batchSize = 500; // 安定性重視で500件ずつ
       const uploadId = dataObj.id || `up-${Date.now()}`;
 
-      if (totalRows > 50000) {
-        alert(`${totalRows.toLocaleString()}行のデータを保存します。しばらくお待ちください。`);
-      }
+      console.log(`Starting cloud save for ${totalRows} rows...`);
 
       for (let i = 0; i < totalRows; i += batchSize) {
         const batch = dataArray.slice(i, i + batchSize).map(row => {
@@ -170,14 +168,24 @@ function App() {
         });
 
         const { error } = await client.from(table).insert(batch);
-        if (error) throw error;
+        if (error) {
+          console.error(`Error at batch starting ${i}:`, error);
+          throw error;
+        }
+
+        // サーバーへの負荷を抑えるために0.1秒待機
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        if (i % 5000 === 0) {
+          console.log(`Cloud save progress: ${i} / ${totalRows} rows...`);
+        }
       }
       
-      alert(`「${dataObj.filename}」をクラウドに保存しました！`);
+      alert(`「${dataObj.filename}」(${totalRows.toLocaleString()}件)をクラウドに保存しました！`);
       setSyncState(prev => ({ ...prev, saving: false, lastSuccess: 'Saved!' }));
     } catch (err) {
       console.error(err);
-      const msg = err.message || "保存失敗。形式を自動調整しましたがエラーが発生しました。";
+      const msg = err.message || "保存失敗。通信環境を確認して再度お試しください。";
       alert("保存エラー: " + msg);
       setSyncState(prev => ({ ...prev, saving: false, lastError: msg }));
     }
