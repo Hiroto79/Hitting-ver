@@ -117,19 +117,18 @@ export const calculateMax = (events, key) => {
 };
 
 // Group events by team and then by player for O(N) lookup
-export const groupEventsByTeamAndPlayer = (savantData, nameKey) => {
-  const grouped = {};
-  if (!savantData) return grouped;
+export const groupEventsByTeamAndPlayer = (data, nameKey = 'player_name') => {
+  if (!data || !Array.isArray(data)) return {};
   
-  savantData.forEach(row => {
-    const team = row.inning_topbot === 'Top' ? row.away_team : row.home_team;
-    const player = String(row[nameKey]);
-    if (!team || !player) return;
+  return data.reduce((acc, row) => {
+    const team = row.home_team || 'Unknown Team';
+    // 修正: 選手名が数値（ID）の場合でも文字列として扱い、正しくグループ化できるようにする
+    const rawName = row[nameKey];
+    const player = (rawName === null || rawName === undefined) ? 'Unknown Player' : String(rawName);
     
-    if (!grouped[team]) grouped[team] = {};
-    if (!grouped[team][player]) grouped[team][player] = [];
-    grouped[team][player].push(row);
-  });
-  
-  return grouped;
+    if (!acc[team]) acc[team] = {};
+    if (!acc[team][player]) acc[team][player] = [];
+    acc[team][player].push(row);
+    return acc;
+  }, {});
 };
