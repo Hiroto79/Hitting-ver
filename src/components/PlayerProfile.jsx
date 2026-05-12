@@ -1,494 +1,364 @@
-import React, { useMemo } from 'react';
-import { calculateAverages, calculateMax, parseNumeric, isBarrel } from '../utils/dataHelpers';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  BarChart, Bar, Legend, Cell 
+  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  Radar, RadarChart, PolarGrid, PolarAngleAxis
 } from 'recharts';
-import { TrendingUp, Activity, Zap, Target, BarChart3, Gauge, PieChart, ShieldCheck, Printer } from 'lucide-react';
+import { 
+  Activity, Zap, Target, Gauge, TrendingUp, BarChart3, 
+  Printer, ShieldAlert, ShieldCheck, List, Layout, ChevronDown, ChevronUp, MousePointer2, Users
+} from 'lucide-react';
 
-const StatCard = ({ title, value, icon: Icon, colorClass }) => (
-  <div className={`p-4 rounded-xl border border-gray-700 bg-gray-800 ${colorClass}`}>
-    <div className="flex items-center justify-between mb-2">
-      <h4 className="text-gray-400 text-sm font-medium">{title}</h4>
-      <Icon className="w-5 h-5 opacity-70" />
-    </div>
-    <div className="text-2xl font-bold text-white">{value}</div>
-  </div>
-);
+import { 
+  parseNumeric, 
+  getDataValue, 
+  calculateAverages,
+  BS_KEYS,
+  PLANE_KEYS,
+  CONN_KEYS,
+  ROT_KEYS,
+  TIME_KEYS,
+  EV_KEYS,
+  LA_KEYS,
+  AA_KEYS,
+  HS_KEYS,
+  ON_PLANE_SCORE_KEYS
+} from '../utils/dataHelpers';
 
-const getBlastVal = (row, pattern) => {
-  const key = Object.keys(row).find(k => k.includes(pattern));
-  return key ? parseNumeric(row[key]) : NaN;
-};
+// No unit conversion - all Rapsodo/Blast data is already in km/h
 
-const formatVal = (val, decimals = 1, unit = '') => {
-  return (val === null || val === undefined || isNaN(val)) ? '-' : `${val.toFixed(decimals)}${unit}`;
-};
+// --- Shared Components ---
 
-// 変換定数
-const MPH_TO_KMH = 1.60934;
-const FEET_TO_METERS = 0.3048;
+const SprayChart = ({ data }) => {
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+  const containerRef = useRef(null);
 
-function PlayerProfile({ playerName, stats }) {
-  const [hitsOnly, setHitsOnly] = React.useState(false);
-  const [laRange, setLaRange] = React.useState([-90, 90]);
+  if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-slate-600 text-[10px] italic">No Data</div>;
 
-  const { savantEvents, blastEvents } = stats;
-  
-  const filteredSavant = useMemo(() => {
-    return savantEvents.filter(e => {
-      const isHitEvent = ['single', 'double', 'triple', 'home_run'].includes(e.events?.toLowerCase());
-      const la = parseNumeric(e.launch_angle);
-      const passHits = hitsOnly ? isHitEvent : true;
-      const passLa = la >= laRange[0] && la <= laRange[1];
-      return passHits && passLa;
-    });
-  }, [savantEvents, hitsOnly, laRange]);
-
-  const statsSummary = useMemo(() => {
-    // 1. バットスピードの取得 (Savantがあればmph、なければBlastのkm/h)
-    const savantBatSpeed = calculateAverages(filteredSavant, 'bat_speed');
-    const blastBatSpeed = calculateAverages(blastEvents, 'バットスピード');
-    
-    let avgBatSpeed = 0;
-    let maxBatSpeed = 0;
-    
-    // 判定ロジック: Savantデータがあり、かつ数値が一般的なmphの範囲（例: 100未満）ならkm/hに変換
-    if (savantBatSpeed > 0) {
-      const needsConversion = savantBatSpeed < 100; 
-      avgBatSpeed = needsConversion ? savantBatSpeed * MPH_TO_KMH : savantBatSpeed;
-      maxBatSpeed = needsConversion ? calculateMax(filteredSavant, 'bat_speed') * MPH_TO_KMH : calculateMax(filteredSavant, 'bat_speed');
+  const getCoordinates = (row) => {
+    const hc_x = row.hc_x;
+    const hc_y = row.hc_y;
+    const angle = getDataValue(row, ['Direction', 'direction', 'bearing', 'Bearing', 'CameraDirection', 'hc_x']);
+    const distance = getDataValue(row, ['hit_distance_sc', 'Distance', 'distance', 'CameraDistance']);
+    if (hc_x !== undefined && hc_x !== null && hc_y !== undefined && hc_y !== null && hc_x !== '' && hc_y !== '') {
+      const x = (parseNumeric(hc_x) - 125.42) * 1.5 + 150;
+      const y = 300 - (204.44 - parseNumeric(hc_y)) * 1.5;
+      return { x, y };
     } else {
-      avgBatSpeed = blastBatSpeed;
-      maxBatSpeed = calculateMax(blastEvents, 'バットスピード');
+      const rad = (angle * Math.PI) / 180;
+      // Rapsodo distance is typically in meters. Max distance around 130m-140m.
+      const distScale = Math.min(distance, 140) / 140 * 250; 
+      const x = 150 + Math.sin(rad) * distScale;
+      const y = 280 - Math.cos(rad) * distScale;
+      return { x, y };
     }
-
-    // 2. 打球速度 (mph -> km/h)
-    const rawExitVelo = calculateAverages(filteredSavant, 'launch_speed');
-    const avgExitVelo = rawExitVelo > 0 && rawExitVelo < 130 ? rawExitVelo * MPH_TO_KMH : rawExitVelo;
-    const rawMaxExitVelo = calculateMax(filteredSavant, 'launch_speed');
-    const maxExitVelo = rawMaxExitVelo > 0 && rawMaxExitVelo < 130 ? rawMaxExitVelo * MPH_TO_KMH : rawMaxExitVelo;
-
-    const avgAttackAngle = calculateAverages(filteredSavant, 'attack_angle');
-    const avgLaunchAngle = calculateAverages(filteredSavant, 'launch_angle');
-    
-    const avgPlaneScore = calculateAverages(blastEvents, 'オンプレーンスコア');
-    const avgConnection = calculateAverages(blastEvents, '体とバットの角度スコア');
-    const avgRotation = calculateAverages(blastEvents, '体の回転による加速スコア');
-    const avgSwingTime = calculateAverages(blastEvents, 'スイング時間 (sec)');
-
-    const barrelEvents = filteredSavant.filter(e => isBarrel(parseNumeric(e.launch_speed), parseNumeric(e.launch_angle)));
-    const barrelRate = filteredSavant.length > 0 ? (barrelEvents.length / filteredSavant.length * 100).toFixed(1) : 0;
-
-    const hardHitEvents = filteredSavant.filter(e => {
-      const velo = parseNumeric(e.launch_speed);
-      const veloKmh = velo < 130 ? velo * MPH_TO_KMH : velo;
-      return veloKmh >= 152.8;
-    });
-    const hardHitRate = filteredSavant.length > 0 ? (hardHitEvents.length / filteredSavant.length * 100).toFixed(1) : 0;
-    
-    const sweetSpotEvents = filteredSavant.filter(e => {
-      const la = parseNumeric(e.launch_angle);
-      return la >= 8 && la <= 32;
-    });
-    const sweetSpotRate = filteredSavant.length > 0 ? (sweetSpotEvents.length / filteredSavant.length * 100).toFixed(1) : 0;
-
-    return {
-      avgBatSpeed, maxBatSpeed, avgAttackAngle, avgExitVelo, maxExitVelo, avgLaunchAngle,
-      avgPlaneScore, avgConnection, avgRotation, avgSwingTime,
-      barrelRate, hardHitRate, sweetSpotRate
-    };
-  }, [filteredSavant, blastEvents]);
-
-  const radarData = useMemo(() => [
-    { subject: 'スイング速度', A: Math.min(100, (statsSummary.avgBatSpeed / 130) * 100), fullMark: 100, value: statsSummary.avgBatSpeed.toFixed(1) + ' km/h' },
-    { subject: '打球速度', A: Math.min(100, (statsSummary.avgExitVelo / 165) * 100), fullMark: 100, value: statsSummary.avgExitVelo.toFixed(1) + ' km/h' },
-    { subject: 'コンタクト', A: statsSummary.avgPlaneScore, fullMark: 100, value: statsSummary.avgPlaneScore.toFixed(1) + ' %' },
-    { subject: '回転加速', A: statsSummary.avgRotation, fullMark: 100, value: statsSummary.avgRotation.toFixed(1) },
-    { subject: '角度調整', A: statsSummary.avgConnection, fullMark: 100, value: statsSummary.avgConnection.toFixed(1) },
-  ], [statsSummary]);
-
-  const scatterData = useMemo(() => {
-    return filteredSavant
-      .filter(e => !isNaN(parseNumeric(e.bat_speed)) && !isNaN(parseNumeric(e.attack_angle)))
-      .map(e => {
-        const bs = parseNumeric(e.bat_speed);
-        const ev = parseNumeric(e.launch_speed) || 0;
-        return {
-          batSpeed: bs < 100 ? bs * MPH_TO_KMH : bs,
-          attackAngle: parseNumeric(e.attack_angle),
-          exitVelo: ev < 130 ? ev * MPH_TO_KMH : ev
-        };
-      });
-  }, [filteredSavant]);
-
-  const { 
-    avgBatSpeed, maxBatSpeed, avgAttackAngle, avgExitVelo, maxExitVelo, avgLaunchAngle,
-    avgPlaneScore, avgConnection, avgRotation, avgSwingTime,
-    barrelRate, hardHitRate, sweetSpotRate 
-  } = statsSummary;
+  };
 
   return (
-    <>
-      {/* 印刷用CSSの注入: 印刷時はサイト全体を消し、レポートのみ表示 */}
+    <div className="relative w-full h-full flex items-center justify-center" ref={containerRef}>
+      <svg viewBox="0 0 300 300" className="spray-chart-svg w-full h-full max-h-[300px] drop-shadow-xl">
+        {/* Field base */}
+        <path className="spray-field-outfield" d="M150 280 L10 140 A 198 198 0 0 1 290 140 Z" fill="#0f172a" stroke="#334155" strokeWidth="2" />
+        {/* Infield dirt area */}
+        <path className="spray-field-infield" d="M150 280 L210 220 A 84 84 0 0 0 90 220 Z" fill="#1e293b" stroke="#475569" strokeWidth="1" />
+        {/* Foul lines */}
+        <path className="spray-field-lines" d="M150 280 L10 140 M150 280 L290 140" fill="none" stroke="#475569" strokeWidth="1" strokeDasharray="4 4" />
+        {/* Bases */}
+        <rect x="148" y="278" width="4" height="4" fill="#fff" transform="rotate(45 150 280)" />
+        {data.map((row, i) => {
+          const { x, y } = getCoordinates(row);
+          const ev = parseNumeric(getDataValue(row, EV_KEYS));
+          const la = parseNumeric(getDataValue(row, LA_KEYS));
+          const isHit = (row.events || '').toLowerCase().includes('single') || (row.Result || '').toLowerCase().includes('hit') || (row.events || '').toLowerCase().includes('double') || (row.events || '').toLowerCase().includes('home_run');
+          // Size based on exit velocity, default to 3 if unknown
+          const r = ev > 140 ? 4.5 : ev > 120 ? 3.5 : 2.5;
+          return (
+            <circle 
+              key={i} 
+              cx={x} 
+              cy={y} 
+              r={r} 
+              fill={isHit ? "#10b981" : "#ef4444"} 
+              fillOpacity="0.8" 
+              stroke="#fff" 
+              strokeWidth="0.5"
+              onMouseEnter={() => setHoveredPoint({ x, y, ev, la })}
+              onMouseLeave={() => setHoveredPoint(null)}
+              className="cursor-pointer transition-all hover:stroke-yellow-400 hover:stroke-[1.5]"
+            >
+              <title>{`速度: ${ev ? ev.toFixed(1) : '-'} km/h\n角度: ${la ? la.toFixed(1) : '-'}°`}</title>
+            </circle>
+          );
+        })}
+      </svg>
+
+      {hoveredPoint && (
+        <div 
+          className="absolute z-50 bg-slate-950/90 border border-slate-700 p-2 rounded shadow-2xl pointer-events-none text-[10px]"
+          style={{ 
+            left: `${(hoveredPoint.x / 300) * 100}%`, 
+            top: `${(hoveredPoint.y / 300) * 100}%`,
+            transform: 'translate(-50%, -120%)'
+          }}
+        >
+          <p className="text-emerald-400 font-bold mb-0.5 flex justify-between gap-3">
+            <span>速度:</span>
+            <span className="text-white font-mono">{hoveredPoint.ev ? hoveredPoint.ev.toFixed(1) : '-'} <span className="text-[8px] opacity-50">km/h</span></span>
+          </p>
+          <p className="text-purple-400 font-bold flex justify-between gap-3">
+            <span>角度:</span>
+            <span className="text-white font-mono">{hoveredPoint.la ? hoveredPoint.la.toFixed(1) : '-'} <span className="text-[8px] opacity-50">°</span></span>
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const VelocityAngleChart = ({ data, xKeys, yKeys, xDomain = ['auto', 'auto'], yDomain = [-40, 60], fill = "#3b82f6" }) => {
+  const chartData = data.map(row => ({
+    x: getDataValue(row, xKeys),
+    y: getDataValue(row, yKeys)
+  })).filter(d => d.x > 0);
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ScatterChart margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+        <XAxis type="number" dataKey="x" stroke="#475569" fontSize={10} domain={xDomain} />
+        <YAxis type="number" dataKey="y" stroke="#475569" fontSize={10} domain={yDomain} />
+        <Tooltip 
+          cursor={{ strokeDasharray: '3 3' }} 
+          content={({ active, payload }) => {
+            if (active && payload && payload.length) {
+              const d = payload[0].payload;
+              return (
+                <div className="bg-slate-900 border border-slate-700 p-2 rounded shadow-xl text-[10px]">
+                  <p className="text-blue-400">速度: <span className="text-white font-mono">{parseNumeric(d.x).toFixed(1)}</span></p>
+                  <p className="text-purple-400">角度: <span className="text-white font-mono">{parseNumeric(d.y).toFixed(1)}</span></p>
+                </div>
+              );
+            }
+            return null;
+          }}
+        />
+        <Scatter name="Data" data={chartData} fill={fill} fillOpacity={0.6} />
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+};
+
+
+// --- Main Component ---
+
+const PlayerProfile = ({ playerName, stats, isCombined = false }) => {
+  const savantEvents = stats?.savantEvents || [];
+  const blastEvents = stats?.blastEvents || [];
+  const [forceMode, setForceMode] = useState(null); 
+  const [hitsOnly, setHitsOnly] = useState(false);
+
+  const mode = forceMode || (isCombined ? 'classic' : 'pro');
+
+  const filteredData = useMemo(() => {
+    let data = savantEvents;
+    if (hitsOnly) {
+      data = data.filter(r => (r.events || r.Result || '').toLowerCase().includes('hit') || (r.events || '').toLowerCase().includes('single'));
+    }
+    return data;
+  }, [savantEvents, hitsOnly]);
+
+  const summary = useMemo(() => {
+    const avgEV = calculateAverages(filteredData, EV_KEYS);
+    const maxEV = Math.max(...filteredData.map(r => getDataValue(r, EV_KEYS)), 0);
+    const avgLA = calculateAverages(filteredData, LA_KEYS);
+    const avgBS = calculateAverages(blastEvents, BS_KEYS) || calculateAverages(filteredData, BS_KEYS);
+    const maxBS = Math.max(...blastEvents.map(r => getDataValue(r, BS_KEYS)), ...filteredData.map(r => getDataValue(r, BS_KEYS)), 0);
+    
+    const total = filteredData.length;
+    // Thresholds in km/h (Rapsodo data is already km/h)
+    const hardHit = filteredData.filter(r => getDataValue(r, EV_KEYS) >= 153).length; // 95mph = 153km/h
+    const barrel = filteredData.filter(r => getDataValue(r, EV_KEYS) >= 158 && getDataValue(r, LA_KEYS) >= 26 && getDataValue(r, LA_KEYS) <= 30).length; // 98mph = 158km/h
+    const sweetSpot = filteredData.filter(r => getDataValue(r, LA_KEYS) >= 8 && getDataValue(r, LA_KEYS) <= 32).length;
+
+    return {
+      avgEV, // No conversion - data is already in km/h
+      maxEV, // No conversion
+      avgLA,
+      avgBS, // No conversion
+      maxBS,
+      hardHitRate: total > 0 ? (hardHit / total * 100).toFixed(1) : 0,
+      barrelRate: total > 0 ? (barrel / total * 100).toFixed(1) : 0,
+      sweetSpotRate: total > 0 ? (sweetSpot / total * 100).toFixed(1) : 0,
+      avgPlane: calculateAverages(blastEvents, PLANE_KEYS),
+      avgConn: calculateAverages(blastEvents, CONN_KEYS),
+      avgRot: calculateAverages(blastEvents, ROT_KEYS),
+      avgTime: calculateAverages(blastEvents, TIME_KEYS),
+      avgAA: calculateAverages(blastEvents, AA_KEYS),
+      avgHS: calculateAverages(blastEvents, HS_KEYS),
+      avgPlaneScore: calculateAverages(blastEvents, ON_PLANE_SCORE_KEYS),
+      total
+    };
+  }, [filteredData, blastEvents]);
+
+  const hasBallData = filteredData.some(r => getDataValue(r, EV_KEYS) > 0);
+  const hasBatData = summary.avgBS > 0;
+  const reportTeam = savantEvents[0]?.Team || savantEvents[0]?.team_name || 'Individual';
+
+  const handlePrint = () => {
+    const originalTitle = document.title;
+    document.title = `${playerName || 'player'}_analysis_report`;
+    window.setTimeout(() => {
+      window.print();
+      document.title = originalTitle;
+    }, 150);
+  };
+
+  const renderClassic = () => (
+    <div className="report-content player-report player-screen-report print:bg-white print:text-slate-900">
+      {/* Print-Only Header */}
+      <div className="player-print-header hidden print:block border-b-4 border-blue-600 pb-4 mb-4">
+        <h1 className="text-3xl font-black uppercase">{playerName}</h1>
+        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+          {reportTeam} • {new Date().toLocaleDateString('ja-JP')} • Analysis Report
+        </p>
+      </div>
+
+      <div className="player-report-body space-y-6 print:space-y-4">
+        {/* Summary Metrics */}
+        <div className="player-kpi-grid grid grid-cols-4 gap-4 print:grid-cols-4 print:gap-2 print:mb-4">
+          {[
+            { label: 'Avg EV', val: summary.avgEV.toFixed(1), unit: 'km/h' },
+            { label: 'Avg LA', val: summary.avgLA.toFixed(1), unit: '°' },
+            { label: 'Hard Hit', val: summary.hardHitRate, unit: '%' },
+            { label: 'Sweet Spot', val: summary.sweetSpotRate, unit: '%' }
+          ].map((kpi, i) => (
+            <div key={i} className="player-kpi-card bg-slate-800/60 p-4 rounded-xl border border-slate-700 text-center print:bg-slate-50 print:border-slate-200 print:p-2">
+              <p className="text-[10px] text-slate-500 font-bold uppercase print:text-[8px]">{kpi.label}</p>
+              <p className="text-2xl font-black text-white print:text-slate-900 print:text-lg">{kpi.val}<span className="text-[10px] ml-0.5">{kpi.unit}</span></p>
+            </div>
+          ))}
+        </div>
+
+        {/* Charts */}
+        <div className="player-chart-grid grid grid-cols-2 gap-6 print:grid-cols-2 print:gap-4">
+          <div className="player-chart-card bg-slate-800/60 p-6 rounded-2xl border border-slate-700 h-[350px] flex flex-col print:bg-white print:border-2 print:border-slate-100 print:h-[220px] print:p-2">
+            <h3 className="text-xs font-black text-slate-400 uppercase mb-4 print:text-slate-900 print:mb-1 print:text-[10px]">Velocity vs Angle</h3>
+            <div className="player-chart-body flex-1"><VelocityAngleChart data={filteredData} xKeys={EV_KEYS} yKeys={LA_KEYS} /></div>
+          </div>
+          <div className="player-chart-card bg-slate-800/60 p-6 rounded-2xl border border-slate-700 h-[350px] flex flex-col print:bg-white print:border-2 print:border-slate-100 print:h-[220px] print:p-2">
+            <h3 className="text-xs font-black text-slate-400 uppercase mb-4 print:text-slate-900 print:mb-1 print:text-[10px]">Spray Chart</h3>
+            <div className="player-chart-body flex-1"><SprayChart data={filteredData} /></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderPro = () => (
+    <div className="report-content player-report player-screen-report print:bg-white print:text-slate-900">
+      {/* Print-Only Header */}
+      <div className="player-print-header hidden print:block border-b-4 border-blue-600 pb-4 mb-4">
+        <h1 className="text-4xl font-black uppercase leading-none">{playerName}</h1>
+        <p className="text-xs font-bold text-slate-500 mt-2 uppercase tracking-widest">
+          {reportTeam} • {new Date().toLocaleDateString('ja-JP')} • Pro Report
+        </p>
+      </div>
+
+      <div className="player-report-body space-y-8 print:space-y-4">
+        <div className="player-kpi-grid grid grid-cols-4 gap-4 print:grid-cols-4 print:gap-2">
+          {[
+            { label: 'EV (Avg)', val: summary.avgEV.toFixed(1), color: 'blue' },
+            { label: 'EV (Max)', val: summary.maxEV.toFixed(1), color: 'red' },
+            { label: 'Hard Hit%', val: summary.hardHitRate, color: 'orange' },
+            { label: 'Launch∠', val: summary.avgLA.toFixed(1), color: 'emerald' }
+          ].map((kpi, i) => (
+            <div key={i} className="player-kpi-card bg-slate-800/40 p-5 rounded-3xl border border-slate-700 text-center print:bg-slate-50 print:border-slate-200 print:p-3">
+              <p className="text-[10px] text-slate-400 font-black uppercase print:text-slate-500 print:text-[8px]">{kpi.label}</p>
+              <p className="text-3xl font-black text-white print:text-slate-900 print:text-xl">{kpi.val}</p>
+            </div>
+          ))}
+        </div>
+
+        <section className="player-analysis-section bg-slate-900/30 p-8 rounded-[2.5rem] border border-slate-700 print:bg-white print:p-2 print:border-none print:m-0">
+          <h3 className="text-2xl font-black text-white mb-8 uppercase italic border-l-4 border-blue-500 pl-4 print:text-sm print:text-slate-900 print:bg-slate-50 print:p-1 print:mb-2">Ball Tracking Analysis</h3>
+          <div className="player-chart-grid grid grid-cols-2 gap-8 h-[400px] print:grid-cols-2 print:gap-4 print:h-[220px]">
+            <div className="player-chart-card player-chart-card-inner flex flex-col">
+              <h3 className="text-xs font-black text-slate-400 uppercase mb-3 print:text-slate-900 print:mb-1 print:text-[10px]">Velocity vs Angle</h3>
+              <div className="player-chart-body flex-1"><VelocityAngleChart data={filteredData} xKeys={EV_KEYS} yKeys={LA_KEYS} /></div>
+            </div>
+            <div className="player-chart-card player-chart-card-inner flex flex-col">
+              <h3 className="text-xs font-black text-slate-400 uppercase mb-3 print:text-slate-900 print:mb-1 print:text-[10px]">Spray Chart</h3>
+              <div className="player-chart-body flex-1"><SprayChart data={filteredData} /></div>
+            </div>
+          </div>
+        </section>
+
+        {hasBatData && (
+          <section className="player-swing-section bg-gradient-to-br from-slate-800 to-slate-900 p-8 rounded-[2.5rem] border border-purple-500/20 print:hidden">
+            <h3 className="text-purple-400 uppercase tracking-widest flex items-center gap-2 mb-8"><Zap size={16} /> Swing Analysis</h3>
+            <div className="flex justify-around text-center">
+              <div><p className="text-slate-500 text-[10px] font-black uppercase">Avg Bat Speed</p><p className="text-4xl font-black text-white">{summary.avgBS.toFixed(1)}</p></div>
+              <div><p className="text-slate-500 text-[10px] font-black uppercase">On Plane%</p><p className="text-4xl font-black text-white">{summary.avgPlane.toFixed(1)}%</p></div>
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+
+
+  return (
+    <div className="player-profile-root text-slate-200 pb-20">
       <style>{`
-        @media screen { .print-only { display: none; } }
         @media print {
-          .no-print { display: none !important; }
           @page {
-            size: A4;
-            margin: 0;
+            size: A4 portrait;
+            margin: 5mm;
           }
-          html, body {
-            margin: 0 !important;
-            padding: 0 !important;
-            width: 100% !important;
-            min-height: 100% !important;
-            background: #0f172a !important;
-            display: flex !important;
-            justify-content: center !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+          body {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            background-color: white !important;
           }
-          #root {
-            width: 100% !important;
-            display: flex !important;
-            justify-content: center !important;
+          /* Prevent dark backgrounds on spray chart SVG during print */
+          .spray-field-outfield {
+            fill: #f1f5f9 !important;
+            stroke: #94a3b8 !important;
           }
-          .print-only { 
-            display: block !important; 
-            background: #0f172a !important;
-            color: white !important;
-            width: 210mm !important;
-            min-height: 297mm !important;
-            margin: 0 auto !important;
-            padding: 0 !important;
-            position: relative !important;
-            box-sizing: border-box !important;
-            box-shadow: none !important;
+          .spray-field-infield {
+            fill: #e2e8f0 !important;
+            stroke: #94a3b8 !important;
+          }
+          .spray-field-lines {
+            stroke: #94a3b8 !important;
+          }
+          .recharts-cartesian-grid line {
+            stroke: #e2e8f0 !important;
+          }
+          svg text {
+            fill: #334155 !important;
+          }
+          .no-print {
+            display: none !important;
           }
         }
       `}</style>
 
-      {/* 1. メインUI (画面で見ているもの) */}
-      <div className="mt-4 md:mt-8 space-y-6 md:space-y-8 animate-in fade-in duration-500 no-print">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-2xl md:text-3xl font-extrabold text-[#ffffff]">{playerName}</h2>
-            <p className="text-gray-400 text-sm mt-1 font-bold">打撃分析レポート</p>
-          </div>
-          <div className="flex gap-2 md:gap-4 items-center flex-wrap">
-            <button 
-              onClick={() => window.print()}
-              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white font-bold py-1.5 px-3 md:py-2 md:px-4 rounded-xl transition-all text-xs md:text-sm"
-            >
-              <Printer className="w-4 h-4" /> <span>PDF保存</span>
-            </button>
-            <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700">
-              <button onClick={() => setHitsOnly(false)} className={`px-3 md:px-4 py-1 rounded-lg text-[10px] md:text-xs font-bold transition-all ${!hitsOnly ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>ALL</button>
-              <button onClick={() => setHitsOnly(true)} className={`px-3 md:px-4 py-1 rounded-lg text-[10px] md:text-xs font-bold transition-all ${hitsOnly ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>HITS</button>
-            </div>
-            <div className="flex gap-1.5 md:gap-2">
-              <span className="px-2 py-0.5 md:px-3 md:py-1 bg-blue-900/50 text-blue-300 rounded-full text-[10px] md:text-xs border border-blue-800">Savant: {filteredSavant.length}</span>
-              <span className="px-2 py-0.5 md:px-3 md:py-1 bg-purple-900/50 text-purple-300 rounded-full text-[10px] md:text-xs border border-purple-800">Blast: {blastEvents.length}</span>
-            </div>
-          </div>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 no-print">
+        <div>
+          <h1 className="text-4xl font-black text-white tracking-tight">{playerName}</h1>
+          <p className="text-slate-500 text-xs font-bold mt-1 uppercase tracking-widest">{mode === 'classic' ? 'HITTING ANALYSIS' : 'Rapsodo / Blast 単体分析'}</p>
         </div>
-
-        {/* フィルターセクション */}
-        <div className="bg-slate-800/50 p-4 md:p-6 rounded-2xl border border-slate-700">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 md:gap-6">
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-3 md:mb-4">
-                <span className="text-xs md:text-sm font-bold text-slate-300">Launch Angle: <span className="text-blue-400 font-mono">{laRange[0]}° ~ {laRange[1]}°</span></span>
-                <button onClick={() => setLaRange([-90, 90])} className="text-[10px] text-slate-500 hover:text-white">Reset</button>
-              </div>
-              <div className="relative h-2 bg-slate-700 rounded-full">
-                <input type="range" min="-90" max="90" value={laRange[0]} onChange={(e) => setLaRange([Math.min(Number(e.target.value), laRange[1]), laRange[1]])} className="absolute w-full h-full appearance-none bg-transparent pointer-events-none z-10 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full" />
-                <input type="range" min="-90" max="90" value={laRange[1]} onChange={(e) => setLaRange([laRange[0], Math.max(Number(e.target.value), laRange[0])])} className="absolute w-full h-full appearance-none bg-transparent pointer-events-none z-10 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full" />
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {[[10, 40], [-10, 20], [25, 90], [-90, 5]].map(([min, max], idx) => (
-                <button key={idx} onClick={() => setLaRange([min, max])} className={`px-3 py-1 rounded-lg text-[10px] font-bold border ${laRange[0] === min && laRange[1] === max ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-500'}`}>
-                  {idx === 0 ? 'Line Drive' : idx === 1 ? 'Ground' : idx === 2 ? 'Fly' : 'Down'}
-                </button>
-              ))}
-            </div>
+        <div className="flex items-center gap-4">
+          <div className="bg-slate-800 p-1 rounded-2xl border border-slate-700 flex">
+            <button onClick={() => setForceMode('classic')} className={`p-2 rounded-xl transition-all ${mode === 'classic' ? 'bg-slate-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}><List size={18} /></button>
+            <button onClick={() => setForceMode('pro')} className={`p-2 rounded-xl transition-all ${mode === 'pro' ? 'bg-slate-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}><Layout size={18} /></button>
           </div>
-        </div>
-
-        {/* スタッツカード */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-          <div className="p-4 rounded-xl border border-blue-700 bg-blue-900/10 border-l-4 border-l-blue-500 shadow-lg">
-            <div className="flex items-center justify-between mb-2"><h4 className="text-gray-400 text-xs font-medium uppercase">バットスピード</h4><Zap className="w-4 h-4 text-blue-500" /></div>
-            <div className="flex items-baseline justify-between">
-              <div className="flex items-baseline gap-1"><span className="text-2xl font-black text-white">{avgBatSpeed.toFixed(1)}</span><span className="text-[10px] text-slate-500 font-bold">km/h</span></div>
-              <div className="flex items-baseline gap-1"><span className="text-lg font-bold text-blue-400">{maxBatSpeed.toFixed(1)}</span><span className="text-[8px] text-slate-500 font-bold uppercase">MAX</span></div>
-            </div>
-          </div>
-          <StatCard title="Hard Hit %" value={`${hardHitRate}%`} icon={Gauge} colorClass="border-l-4 border-l-red-500" />
-          <StatCard title="Barrel %" value={`${barrelRate}%`} icon={TrendingUp} colorClass="border-l-4 border-l-yellow-500" />
-          <StatCard title="Sweet Spot %" value={`${sweetSpotRate}%`} icon={Target} colorClass="border-l-4 border-l-orange-500" />
-          <div className="p-4 rounded-xl border border-emerald-700 bg-emerald-900/10 border-l-4 border-l-emerald-500 shadow-lg">
-            <div className="flex items-center justify-between mb-2"><h4 className="text-gray-400 text-xs font-medium uppercase">打球速度</h4><BarChart3 className="w-4 h-4 text-emerald-500" /></div>
-            <div className="flex items-baseline justify-between">
-              <div className="flex items-baseline gap-1"><span className="text-2xl font-black text-white">{avgExitVelo.toFixed(1)}</span><span className="text-[10px] text-slate-500 font-bold">km/h</span></div>
-              <div className="flex items-baseline gap-1"><span className="text-lg font-bold text-emerald-400">{maxExitVelo.toFixed(1)}</span><span className="text-[8px] text-slate-500 font-bold uppercase">MAX</span></div>
-            </div>
-          </div>
-          <StatCard title="平均打球角度" value={`${avgLaunchAngle.toFixed(1)}°`} icon={Activity} colorClass="border-l-4 border-l-purple-500 col-span-2 lg:col-span-1" />
-        </div>
-
-        {/* チャートセクション */}
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 md:gap-8">
-          <div className="lg:col-span-2 bg-slate-800 rounded-3xl p-6 md:p-8 border border-slate-700 shadow-2xl flex flex-col items-center">
-            <h3 className="text-lg font-bold text-white mb-6 flex items-center self-start"><ShieldCheck className="w-5 h-5 mr-2 text-blue-400" />総合評価</h3>
-            <div className="w-full h-[350px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart cx="50%" cy="50%" outerRadius="75%" data={radarData}>
-                  <PolarGrid stroke="#475569" />
-                  <PolarAngleAxis dataKey="subject" stroke="#94a3b8" fontSize={10} />
-                  <Radar name={playerName} dataKey="A" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.6} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '0.5rem', color: '#fff', fontSize: '12px' }}
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        const data = payload[0].payload;
-                        return (
-                          <div className="bg-slate-900 border border-slate-700 p-3 rounded-xl shadow-xl min-w-[120px]">
-                            <div className="text-blue-400 font-bold text-sm mb-1">{data.subject}</div>
-                            <div className="text-white text-xl font-black">{data.value}</div>
-                            <div className="text-slate-400 text-xs mt-1 font-medium">上位 {Math.max(1, 100 - data.A).toFixed(1)}%</div>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                </RadarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="mt-4 text-center">
-              <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Overall Percentile</span>
-              <div className="text-2xl font-black text-blue-400">上位 {Math.max(1, 100 - (radarData.reduce((a, b) => a + b.A, 0) / 5)).toFixed(1)} %</div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-3 bg-slate-800 rounded-3xl p-6 md:p-8 border border-slate-700 shadow-2xl overflow-hidden">
-            <h3 className="text-lg font-bold text-white mb-6 flex items-center"><span className="bg-purple-500 w-1.5 h-5 rounded-full mr-3"></span>Blast Motion 分析</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-6">
-              {[
-                { label: 'オンプレーン', val: avgPlaneScore, unit: '%' },
-                { label: 'コネクション', val: avgConnection, unit: '' },
-                { label: 'ローテーション', val: avgRotation, unit: '' },
-                { label: 'スイング時間', val: avgSwingTime, unit: 's', decimals: 2 }
-              ].map((m, i) => (
-                <div key={i} className="bg-slate-900/80 p-4 rounded-2xl text-center border border-slate-700 hover:border-purple-500/50 transition-all">
-                  <div className="text-slate-500 text-[10px] mb-2 uppercase">{m.label}</div>
-                  <div className="text-2xl text-white font-black">
-                    {m.val.toFixed(m.decimals || 1)}{m.unit && <span className="text-xs ml-0.5 opacity-40">{m.unit}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-8 p-6 bg-slate-900/40 rounded-2xl border border-slate-700/50">
-              <div className="flex items-center justify-between mb-4"><span className="text-xs font-bold text-slate-300">スイング効率 (オンプレーン%)</span><span className="text-white font-bold">{avgPlaneScore.toFixed(1)}%</span></div>
-              <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden"><div className="bg-purple-500 h-full" style={{ width: `${avgPlaneScore}%` }}></div></div>
-            </div>
-          </div>
-        </div>
-
-        {/* 散布図セクション */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-slate-800 rounded-3xl p-6 border border-slate-700 h-[400px] shadow-2xl">
-            <h3 className="text-sm font-bold text-white mb-6 text-center">打球速度 (km/h) vs アッパースイング度</h3>
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                <XAxis type="number" dataKey="exitVelo" name="Exit Velocity" unit="km/h" stroke="#475569" fontSize={10} domain={['auto', 'auto']} />
-                <YAxis type="number" dataKey="attackAngle" name="Attack Angle" unit="°" stroke="#475569" fontSize={10} domain={['auto', 'auto']} />
-                <Tooltip 
-                  cursor={{ strokeDasharray: '3 3' }} 
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload;
-                      return (
-                        <div className="bg-slate-900 border border-slate-700 p-3 rounded-xl shadow-xl text-xs">
-                          <div className="text-emerald-400 font-bold mb-1">打球データ</div>
-                          <div className="text-white">Attack Angle: <span className="font-mono">{data.attackAngle.toFixed(1)}°</span></div>
-                          <div className="text-white">Exit Velocity: <span className="font-mono">{data.exitVelo.toFixed(1)} km/h</span></div>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Scatter name="Swings" data={scatterData} fill="#10b981" />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="bg-slate-800 rounded-3xl p-6 border border-slate-700 h-[400px] shadow-2xl">
-            <h3 className="text-sm font-bold text-white mb-6 text-center">バットスピード (km/h) vs 打球速度 (km/h)</h3>
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                <XAxis type="number" dataKey="batSpeed" name="Bat Speed" unit="km/h" stroke="#475569" fontSize={10} domain={['auto', 'auto']} />
-                <YAxis type="number" dataKey="exitVelo" name="Exit Velocity" unit="km/h" stroke="#475569" fontSize={10} domain={['auto', 'auto']} />
-                <Tooltip 
-                  cursor={{ strokeDasharray: '3 3' }} 
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload;
-                      return (
-                        <div className="bg-slate-900 border border-slate-700 p-3 rounded-xl shadow-xl text-xs">
-                          <div className="text-blue-400 font-bold mb-1">スイングデータ</div>
-                          <div className="text-white">Bat Speed: <span className="font-mono">{data.batSpeed.toFixed(1)} km/h</span></div>
-                          <div className="text-white">Exit Velocity: <span className="font-mono">{data.exitVelo.toFixed(1)} km/h</span></div>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Scatter name="Swings" data={scatterData} fill="#3b82f6" />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* 詳細データテーブル */}
-        <div className="bg-slate-800 rounded-3xl p-6 border border-slate-700 shadow-2xl overflow-hidden">
-          <h3 className="text-base font-bold text-white mb-6 text-center">Blast 詳細データ (Top 30)</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left text-gray-300">
-              <thead className="text-xs text-gray-400 uppercase bg-slate-900/80 sticky top-0">
-                <tr><th className="px-4 py-3 border-b border-slate-700">オンプレーン</th><th className="px-4 py-3 border-b border-slate-700">構え角度</th><th className="px-4 py-3 border-b border-slate-700">インパクト角度</th><th className="px-4 py-3 border-b border-slate-700">パワー</th></tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700/50">
-                {blastEvents.slice(0, 30).map((row, i) => (
-                  <tr key={i} className="hover:bg-slate-700/30">
-                    <td className="px-4 py-3 font-mono text-purple-300">{formatVal(getBlastVal(row, 'オンプレーン'), 1, '%')}</td>
-                    <td className="px-4 py-3">{formatVal(getBlastVal(row, '構え'), 1, '°')}</td>
-                    <td className="px-4 py-3">{formatVal(getBlastVal(row, 'インパクト'), 1, '°')}</td>
-                    <td className="px-4 py-3 font-bold text-white">{formatVal(getBlastVal(row, 'パワー'), 2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <button onClick={handlePrint} className="bg-white text-slate-900 font-black py-3 px-6 rounded-2xl flex items-center gap-2 shadow-xl hover:bg-slate-100 transition-all"><Printer size={18} /> PDF出力</button>
         </div>
       </div>
 
-      {/* 2. 印刷専用レポート (バランスと色味を徹底改善) */}
-      <div className="print-only" style={{ background: '#0f172a', color: '#fff', padding: '0', height: '297mm', width: '210mm', overflow: 'hidden', fontFamily: '"Helvetica Neue", Arial, sans-serif' }}>
-        {/* 統一ヘッダー - スペース削減 */}
-        <div style={{ background: '#0f172a', color: '#fff', padding: '10px 50px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '6px solid #3b82f6' }}>
-          <div>
-            <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '3px', marginBottom: '4px' }}>パフォーマンス診断</div>
-            <h1 style={{ fontSize: '32px', fontWeight: '900', margin: '0', lineHeight: '1.1', letterSpacing: '-0.5px', color: '#ffffff' }}>{playerName}</h1>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '16px', fontWeight: '900', color: '#3b82f6', letterSpacing: '1px' }}>BASEBALL ANALYZER</div>
-            <div style={{ fontSize: '9px', color: '#64748b', marginTop: '3px', fontWeight: 'bold' }}>発行日: {new Date().toLocaleDateString('ja-JP')}</div>
-          </div>
-        </div>
-
-        <div style={{ padding: '35px 40px 10px 40px' }}>
-          {/* 統一されたスタッツカード */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '15px' }}>
-            {[
-              { label: '平均バットスピード', val: avgBatSpeed, unit: 'km/h', color: '#3b82f6', max: maxBatSpeed },
-              { label: '平均打球速度', val: avgExitVelo, unit: 'km/h', color: '#10b981', max: maxExitVelo },
-              { label: '平均打球角度', val: avgLaunchAngle, unit: '°', color: '#8b5cf6', detail: `アッパー度: ${avgAttackAngle.toFixed(1)}°` }
-            ].map((stat, i) => (
-              <div key={i} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', textAlign: 'center' }}>
-                <div style={{ fontSize: '9px', fontWeight: '800', color: '#64748b', marginBottom: '10px', textTransform: 'uppercase' }}>{stat.label}</div>
-                <div style={{ fontSize: '32px', fontWeight: '900', color: '#0f172a' }}>{stat.val.toFixed(1)}<span style={{ fontSize: '14px', color: '#94a3b8', marginLeft: '4px' }}>{stat.unit}</span></div>
-                <div style={{ fontSize: '10px', fontWeight: 'bold', color: stat.color, marginTop: '8px' }}>
-                  {stat.max ? `最大: ${stat.max.toFixed(1)} km/h` : stat.detail}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '30px', marginBottom: '35px' }}>
-            {/* 総合評価 - デザイン統一 */}
-            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '24px', padding: '30px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-                <h3 style={{ fontSize: '14px', fontWeight: '900', color: '#0f172a', margin: '0' }}>総合評価分析</h3>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#64748b' }}>パーセンタイル</div>
-                  <div style={{ fontSize: '22px', fontWeight: '900', color: '#3b82f6' }}>上位 {Math.max(1, 100 - (radarData.reduce((a, b) => a + b.A, 0) / 5)).toFixed(1)}%</div>
-                </div>
-              </div>
-              <div style={{ width: '100%', height: '320px', display: 'flex', justifyContent: 'center' }}>
-                <RadarChart width={350} height={320} data={radarData}>
-                  <PolarGrid stroke="#cbd5e1" />
-                  <PolarAngleAxis dataKey="subject" stroke="#475569" fontSize={11} fontWeight="bold" />
-                  <Radar name={playerName} dataKey="A" stroke="#0f172a" strokeWidth={2} fill="#3b82f6" fillOpacity={0.3} />
-                </RadarChart>
-              </div>
-            </div>
-
-            {/* Blast指標 - デザイン統一 */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '24px', padding: '25px', flex: '1' }}>
-                <h3 style={{ fontSize: '14px', fontWeight: '900', color: '#0f172a', marginBottom: '20px' }}>Blast Motion 分析</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                  {[
-                    { label: 'オンプレーン', val: avgPlaneScore, unit: '%' },
-                    { label: 'コネクション', val: avgConnection, unit: '°' },
-                    { label: 'ローテーション', val: avgRotation, unit: '' },
-                    { label: 'スイング時間', val: avgSwingTime, unit: 's', decimals: 2 }
-                  ].map((m, i) => (
-                    <div key={i} style={{ padding: '15px', borderBottom: '1px solid #e2e8f0' }}>
-                      <div style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 'bold', marginBottom: '5px' }}>{m.label}</div>
-                      <div style={{ fontSize: '20px', fontWeight: '900', color: '#0f172a' }}>{m.val.toFixed(m.decimals || 1)}<span style={{ fontSize: '10px', color: '#94a3b8' }}>{m.unit}</span></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '24px', padding: '25px', color: '#000000', textAlign: 'center' }}>
-                <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '10px' }}>スイング効率</div>
-                <div style={{ fontSize: '48px', fontWeight: '900', color: '#000000', lineHeight: '1' }}>{avgPlaneScore.toFixed(1)}%</div>
-                <div style={{ marginTop: '15px', height: '6px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${avgPlaneScore}%`, background: '#3b82f6' }}></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 散布図セクション - ページバランス改善 */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '25px' }}>
-             <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '20px', padding: '0', height: '320px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                <h4 style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b', textAlign: 'center', marginTop: '15px', marginBottom: '0' }}>打球速度 vs アッパースイング度</h4>
-                <div style={{ width: '340px', height: '270px' }}>
-                  <ScatterChart width={340} height={270} margin={{ top: 25, right: 65, bottom: 25, left: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                    <XAxis type="number" dataKey="exitVelo" stroke="#94a3b8" fontSize={8} fontWeight="bold" tick={{ fill: '#94a3b8' }} />
-                    <YAxis type="number" dataKey="attackAngle" stroke="#94a3b8" fontSize={8} fontWeight="bold" tick={{ fill: '#94a3b8' }} />
-                    <Scatter data={scatterData} fill="#10b981" fillOpacity={0.6} />
-                  </ScatterChart>
-                </div>
-             </div>
-             <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '20px', padding: '0', height: '320px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                <h4 style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b', textAlign: 'center', marginTop: '15px', marginBottom: '0' }}>バットスピード vs 打球速度</h4>
-                <div style={{ width: '340px', height: '270px' }}>
-                  <ScatterChart width={340} height={270} margin={{ top: 25, right: 65, bottom: 25, left: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                    <XAxis type="number" dataKey="batSpeed" stroke="#94a3b8" fontSize={8} fontWeight="bold" tick={{ fill: '#94a3b8' }} />
-                    <YAxis type="number" dataKey="exitVelo" stroke="#94a3b8" fontSize={8} fontWeight="bold" tick={{ fill: '#94a3b8' }} />
-                    <Scatter data={scatterData} fill="#3b82f6" fillOpacity={0.6} />
-                  </ScatterChart>
-                </div>
-             </div>
-          </div>
-        </div>
-      </div>
-    </>
+      {mode === 'classic' ? renderClassic() : renderPro()}
+    </div>
   );
-}
+};
 
 export default PlayerProfile;
