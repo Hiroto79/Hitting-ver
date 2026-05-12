@@ -153,7 +153,7 @@ const PlayerProfile = ({ playerName, stats, isCombined = false }) => {
   const savantEvents = stats?.savantEvents || [];
   const blastEvents = stats?.blastEvents || [];
   const [forceMode, setForceMode] = useState(null); 
-  const [hitsOnly, setHitsOnly] = useState(false);
+  const [hitsOnly] = useState(false);
 
   const mode = forceMode || (isCombined ? 'classic' : 'pro');
 
@@ -198,7 +198,7 @@ const PlayerProfile = ({ playerName, stats, isCombined = false }) => {
     };
   }, [filteredData, blastEvents]);
 
-  const hasBallData = filteredData.some(r => getDataValue(r, EV_KEYS) > 0);
+
   const hasBatData = summary.avgBS > 0;
   const reportTeam = savantEvents[0]?.Team || savantEvents[0]?.team_name || 'Individual';
 

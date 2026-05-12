@@ -24,7 +24,7 @@ function Sidebar({ activeView, setActiveView, savantData, isOpen, syncState, pro
         <h1 className="text-xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
           Baseball Analyzer
         </h1>
-        <p className="text-xs text-gray-500 mt-1">Savant & Blast Integration</p>
+        <p className="text-xs text-gray-500 mt-1">Rapsodo & Blast Integration</p>
       </div>
 
       <nav className="flex-1 py-6 px-4 space-y-2">

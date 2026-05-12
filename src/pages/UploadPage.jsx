@@ -3,130 +3,18 @@ import Papa from 'papaparse';
 import { UploadCloud, FileText, Database, Cloud, Save, RefreshCw, X } from 'lucide-react';
 import { getSupabase } from '../lib/supabase';
 
-function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, setActiveView, saveToCloud, syncState, profile }) {
+function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, setActiveView, saveToCloud, syncState, profile, fetchFromCloud }) {
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const loadFromSupabase = async () => {
+  const handleCloudSync = async () => {
     setIsLoading(true);
-    const client = getSupabase();
-
     try {
-      const grouped = { savant: [], blast: [], combined: [] };
-
-      // すべての行を「意地でも」最後まで取得するためのヘルパー関数
-      const fetchAllRows = async (tableName, teamIdFilter = null) => {
-        if (!teamIdFilter && profile?.role !== 'admin') return [];
-
-        let allRows = [];
-        let offset = 0;
-        let hasMore = true;
-        const CHUNK_SIZE = 3; // 3並列に抑えて安定性を最大化
-
-        while (hasMore) {
-          const promises = [];
-          for (let i = 0; i < CHUNK_SIZE; i++) {
-            const from = offset + (i * 1000);
-            const to = from + 999;
-            let query = client.from(tableName).select('*').range(from, to).order('created_at', { ascending: false });
-            if (teamIdFilter) query = query.eq('team_id', teamIdFilter);
-            promises.push(query);
-          }
-
-          const results = await Promise.all(promises);
-          let foundInThisBatch = 0;
-          
-          for (const res of results) {
-            const data = res.data || [];
-            if (data.length > 0) {
-              allRows = [...allRows, ...data];
-              foundInThisBatch += data.length;
-              if (data.length < 1000) {
-                hasMore = false; // 最後のページに到達
-              }
-            } else {
-              hasMore = false; // データが空
-              break;
-            }
-          }
-
-          if (hasMore && foundInThisBatch > 0) {
-            offset += (CHUNK_SIZE * 1000);
-          } else {
-            hasMore = false;
-          }
-          
-          // 上限10万件
-          if (allRows.length >= 100000) hasMore = false;
-        }
-        
-        console.log(`Fetched total ${allRows.length} rows from ${tableName}`);
-        return allRows;
-      };
-
-      // 1. Fetch from Unified Table
-      const myTeamId = profile?.team_id;
-      const unifiedDataRows = await fetchAllRows('baseball_data', myTeamId);
-      
-      if (unifiedDataRows) {
-        unifiedDataRows.forEach(item => {
-          let parsedData = [];
-          if (item.data) {
-            try {
-              if (typeof item.data === 'string') {
-                const results = Papa.parse(item.data, { header: true, dynamicTyping: true, skipEmptyLines: true });
-                parsedData = results.data;
-              } else {
-                parsedData = Array.isArray(item.data) ? item.data : [];
-              }
-            } catch (e) { console.error(e); }
-          }
-          if (grouped[item.type]) {
-            grouped[item.type].push({ id: item.id, filename: item.filename, headers: item.headers, data: parsedData, is_csv: true });
-          }
-        });
-      }
-
-      // 2. Fetch from Specialized Tables
-      const fetchSpecialized = async (tableName, type) => {
-        const rows = await fetchAllRows(tableName, myTeamId);
-        if (!rows || rows.length === 0) return;
-
-        const filesMap = {};
-        rows.forEach(row => {
-          const name = row.file_name || '不明なファイル';
-          // 修正: 重複排除を完全に撤廃。見つかったデータはすべてそのまま追加
-          if (!filesMap[name]) {
-            filesMap[name] = {
-              id: row.upload_id || `file-${name}`,
-              filename: name,
-              headers: Object.keys(row).filter(k => !['id', 'created_at', 'file_name', 'upload_id', 'team_id', 'owner_id', 'updated_at'].includes(k)),
-              data: []
-            };
-          }
-          filesMap[name].data.push(row);
-        });
-
-        Object.values(filesMap).forEach(file => grouped[type].push(file));
-      };
-
-      await fetchSpecialized('savant_data', 'savant');
-      await fetchSpecialized('blast_data', 'blast');
-
-      const totalFiles = grouped.savant.length + grouped.blast.length + grouped.combined.length;
-      if (totalFiles === 0) {
-        alert("クラウドに保存されているデータが見つかりませんでした。");
-        return;
-      }
-
-      updateDataState('savant', grouped.savant, 'set');
-      updateDataState('blast', grouped.blast, 'set');
-      updateDataState('combined', grouped.combined, 'set');
-      
-      alert(`${totalFiles} 個のファイルを同期しました。分析画面へ移動します。`);
-      setActiveView('team');
+      await fetchFromCloud();
+      // Sync complete, optionally redirect or show success
+      // setActiveView('team');
     } catch (err) {
       console.error(err);
-      alert("同期に失敗しました:\n" + (err.message || "Unknown Error"));
+      alert("同期に失敗しました。");
     } finally {
       setIsLoading(false);
     }
@@ -136,32 +24,85 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
     const file = event.target.files[0];
     if (!file) return;
 
-    Papa.parse(file, {
-      header: true,
-      dynamicTyping: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const headers = results.meta.fields;
-        const isSavant = headers.includes('launch_speed') || headers.includes('player_name') || headers.includes('batter');
-        const isBlast = headers.some(h => h.includes('オンプレーン') || h.includes('バットスピード'));
-
-        if (type === 'savant' && isBlast && !isSavant) {
-          alert("警告: BlastデータがSavantスロットにアップロードされた可能性があります。列名を確認してください。");
-        } else if (type === 'blast' && isSavant && !isBlast) {
-          alert("警告: SavantデータがBlastスロットにアップロードされた可能性があります。");
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const arrayBuffer = e.target.result;
+      
+      // Try UTF-8 first
+      let decoder = new TextDecoder('utf-8');
+      let text = decoder.decode(arrayBuffer);
+      
+      // If it looks like Shift-JIS (common for Japanese Blast CSVs) or markers are missing, try Shift-JIS
+      const hasUtf8Markers = text.includes('©Blast Motion') || text.includes('Date') || text.includes('バットスピード');
+      if (!hasUtf8Markers) {
+        try {
+          decoder = new TextDecoder('shift-jis');
+          const sjisText = decoder.decode(arrayBuffer);
+          if (sjisText.includes('©Blast Motion') || sjisText.includes('日付') || sjisText.includes('バットスピード')) {
+            text = sjisText;
+          }
+        } catch (err) {
+          console.error("Shift-JIS decoding failed", err);
         }
-
-        updateDataState(type, {
-          filename: file.name,
-          headers: headers,
-          data: results.data
-        }, 'add');
-      },
-      error: (err) => {
-        console.error("Error parsing CSV:", err);
-        alert("CSVの読み込みに失敗しました。");
       }
-    });
+
+      let csvText = text;
+      // If it's Blast data, skip the first few lines of metadata
+      if (type === 'blast' || text.includes('©Blast Motion') || text.includes('Blast Motion')) {
+        const lines = text.split(/\r?\n/);
+        let headerIndex = -1;
+        for (let i = 0; i < Math.min(lines.length, 30); i++) {
+          const line = lines[i];
+          if ((line.includes('Date') || line.includes('日付')) &&
+              (line.includes('Bat Speed') || line.includes('スイング') || line.includes('バットスピード') || line.includes('スピード'))) {
+            headerIndex = i;
+            break;
+          }
+        }
+        
+        if (headerIndex !== -1) {
+          csvText = lines.slice(headerIndex).join('\n');
+          console.log(`Blast Header found at line ${headerIndex + 1}`);
+        } else {
+          console.warn("Blast header not found, using raw text");
+        }
+      }
+
+      Papa.parse(csvText, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const headers = results.meta.fields || [];
+          
+          // Enhanced mapping to ensure columns like 'バットスピード (mph)' are cleaned up for headers list
+          // but we keep raw results for now. dataHelpers will handle the fuzzy match.
+          
+          const isSavant = headers.includes('launch_speed') || headers.includes('player_name') || headers.includes('batter_name');
+          const isBlast = headers.some(h => h.includes('オンプレーン') || h.includes('バットスピード') || h.includes('アタックアングル') || h.includes('Bat Speed'));
+
+          if (type === 'savant' && isBlast && !isSavant) {
+            alert("警告: BlastデータがRapsodoスロットにアップロードされた可能性があります。");
+          }
+
+          updateDataState(type, {
+            filename: file.name,
+            headers: headers,
+            data: results.data
+          }, 'add');
+
+          if (fileInputRefs.current[type]) {
+            fileInputRefs.current[type].value = '';
+          }
+        },
+        error: (err) => {
+          console.error("Error parsing CSV:", err);
+          alert("CSVのパースに失敗しました。");
+        }
+      });
+    };
+    
+    reader.readAsArrayBuffer(file);
   };
 
   const renderDataView = (files, typeLabel) => {
@@ -236,7 +177,7 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
             クラウド同期
           </div>
           <button 
-            onClick={loadFromSupabase}
+            onClick={handleCloudSync}
             disabled={isLoading}
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white text-xs font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-2"
           >
@@ -252,7 +193,7 @@ function UploadPage({ savantFiles, blastFiles, combinedFiles, updateDataState, s
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-bold text-white flex items-center">
               <span className="bg-blue-500 w-3 h-6 rounded-full mr-3"></span>
-              Savant Data
+              Rapsodo Data
             </h3>
             <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg shadow-blue-900/20">
               ファイルを選択

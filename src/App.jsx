@@ -84,6 +84,9 @@ function App() {
         setSavantFiles(ensureArray(cachedSavant));
         setBlastFiles(ensureArray(cachedBlast));
         setCombinedFiles(ensureArray(cachedCombined));
+        
+        // Auto-fetch from cloud to ensure data is up-to-date
+        fetchFromCloud();
       };
       loadCachedData();
     }
@@ -121,7 +124,7 @@ function App() {
     const SAVANT_COLUMNS = [
       'game_date', 'pitcher_name', 'batter_name', 'pitch_name', 'release_speed', 'release_spin_rate', 
       'launch_speed', 'launch_angle', 'hit_distance_sc', 'events', 'description', 'zone', 'stand', 
-      'p_throws', 'home_team', 'away_team', 'type', 'hit_location', 'bb_type', 'balls', 'strikes', 
+      'p_throws', 'home_team', 'away_team', 'team_name', 'type', 'hit_location', 'bb_type', 'balls', 'strikes', 
       'game_year', 'pfx_x', 'pfx_z', 'plate_x', 'plate_z', 'on_3b', 'on_2b', 'on_1b', 
       'outs_when_up', 'inning', 'inning_topbot', 'hc_x', 'hc_y', 'vx0', 'vy0', 'vz0', 
       'ax', 'ay', 'az', 'sz_top', 'sz_bot', 'effective_speed', 'release_extension', 
@@ -130,12 +133,48 @@ function App() {
     
     const BLAST_COLUMNS = [
       'date', 'player_name', 'bat_speed', 'attack_angle', 'vertical_bat_angle', 'power', 
-      'time_to_contact', 'peak_hand_speed', 'on_plane_efficiency', 'rotation_score', 
-      'on_plane_score', 'connection_score', 'rotation_acceleration', 'connection_at_impact', 
-      'connection_at_address', 'bat_angle', 'file_name', 'upload_id'
+      'time_to_contact', 'peak_hand_speed', 'file_name', 'upload_id'
     ];
 
     const allowedColumns = table === 'savant_data' ? SAVANT_COLUMNS : (table === 'blast_data' ? BLAST_COLUMNS : []);
+
+    // Mapping for Japanese/Rapsodo keys to DB columns
+    const COLUMN_MAP = {
+      // Blast
+      '日付': 'date',
+      '選手名': 'player_name',
+      'バットスピード': 'bat_speed',
+      'アッパースイング': 'attack_angle',
+      'アタックアングル': 'attack_angle',
+      'オンプレーンの効率': 'on_plane_efficiency',
+      'オンプレーン効率': 'on_plane_efficiency',
+      'オンプレーンスコア': 'on_plane_score',
+      'オンプレーン': 'on_plane_efficiency',
+      '体とバットの角度スコア': 'connection_score',
+      'コネクション': 'connection_score',
+      '体の回転による加速スコア': 'rotation_score',
+      'ローテーション': 'rotation_score',
+      '初動': 'rotation_acceleration',
+      'インパクト': 'connection_at_impact',
+      '構え': 'connection_at_address',
+      'スイング時間': 'time_to_contact',
+      '手の最大': 'peak_hand_speed',
+      'パワー': 'power',
+      '垂直バット角度': 'vertical_bat_angle',
+      'バット角度': 'bat_angle',
+      // Rapsodo
+      'ExitVelocity': 'launch_speed',
+      'LaunchAngle': 'launch_angle',
+      'Distance': 'hit_distance_sc',
+      'Date': 'game_date',
+      'Player Name': 'batter_name',
+      'PlayerName': 'batter_name',
+      'PitchBallVelo': 'release_speed',
+      'Team': 'team_name',
+      'Direction': 'hc_x',
+      'Bearing': 'hc_x',
+      'HitDirection': 'hc_x'
+    };
 
     try {
       const dataArray = Array.isArray(dataObj.data) ? dataObj.data : [];
@@ -148,21 +187,116 @@ function App() {
       for (let i = 0; i < totalRows; i += batchSize) {
         const batch = dataArray.slice(i, i + batchSize).map(row => {
           const filteredRow = {};
-          if (allowedColumns.length > 0) {
-            allowedColumns.forEach(col => {
-              if (row[col] !== undefined) filteredRow[col] = row[col];
-              if (col === 'file_name' && row.filename) filteredRow.file_name = row.filename;
-              if (col === 'game_date' && row.date) filteredRow.game_date = row.date;
-            });
-          } else {
-            Object.assign(filteredRow, row);
+          
+          // Map all keys in the row
+          Object.keys(row).forEach(key => {
+            let targetKey = key;
+            const normalizedKey = key.trim();
+            
+            // Check exact or partial mapping
+            const mapKey = Object.keys(COLUMN_MAP).find(k => normalizedKey === k || normalizedKey.includes(k) || k.includes(normalizedKey));
+            if (mapKey) {
+              targetKey = COLUMN_MAP[mapKey];
+            }
+
+            // Only add if it's in the allowed list for the DB
+            if (allowedColumns.includes(targetKey)) {
+              const val = row[key];
+              
+              // Numeric columns that might contain hyphens or non-numeric data
+              const numericColumns = [
+                'launch_speed', 'launch_angle', 'bat_speed', 'attack_angle', 
+                'release_speed', 'release_spin_rate', 'hit_distance_sc', 
+                'time_to_contact', 'peak_hand_speed', 'power', 'vertical_bat_angle'
+              ];
+
+              if (numericColumns.includes(targetKey)) {
+                // If it's a numeric column, parse it. 
+                // If it's a hyphen or empty, Supabase prefers null for double precision
+                if (val === '-' || val === '' || val === null || val === undefined) {
+                  filteredRow[targetKey] = null;
+                } else {
+                  const cleaned = String(val).replace(/[^-0-9.]/g, '');
+                  const num = parseFloat(cleaned);
+                  filteredRow[targetKey] = isNaN(num) ? null : num;
+                }
+              } else {
+                filteredRow[targetKey] = val;
+              }
+            }
+          });
+
+          // Extract Player Name from filename if missing (specifically for Blast data)
+          if (!filteredRow.player_name && dataObj.filename) {
+            const playerMatch = dataObj.filename.match(/Player\s*(\d+)/i) || dataObj.filename.match(/^([^-]+)-/);
+            if (playerMatch) {
+              filteredRow.player_name = playerMatch[0].replace('-', '').trim();
+            }
           }
+
+          // Date parsing helper - flexible extraction of year/month/day
+          const parseJapaneseDate = (dateStr) => {
+            if (!dateStr || typeof dateStr !== 'string') return null;
+            // Already ISO format
+            if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr;
+            
+            const enMonthMap = {'jan':'01','feb':'02','mar':'03','apr':'04','may':'05','jun':'06','jul':'07','aug':'08','sep':'09','oct':'10','nov':'11','dec':'12'};
+            
+            try {
+              // Flexible: find year, English month, and day in any order
+              const yearMatch = dateStr.match(/\b(20\d{2})\b/);
+              const monMatch = dateStr.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i);
+              if (yearMatch && monMatch) {
+                const year = yearMatch[1];
+                const month = enMonthMap[monMatch[1].toLowerCase()];
+                // Find a 1-2 digit number that's not the year
+                const dayMatch = dateStr.match(/\b(\d{1,2})\b/);
+                const day = dayMatch ? dayMatch[1].padStart(2, '0') : '01';
+                return `${year}-${month}-${day}`;
+              }
+              
+              // Japanese format: "11月 24, 2025 02:30:33 午後"
+              let cleaned = dateStr;
+              const months = ['12月','11月','10月','9月','8月','7月','6月','5月','4月','3月','2月','1月'];
+              const monthMap = {'1月':'01','2月':'02','3月':'03','4月':'04','5月':'05','6月':'06','7月':'07','8月':'08','9月':'09','10月':'10','11月':'11','12月':'12'};
+              months.forEach(m => { if (cleaned.includes(m)) cleaned = cleaned.replace(m, monthMap[m]); });
+              const isPM = cleaned.includes('午後');
+              cleaned = cleaned.replace('午前', '').replace('午後', '').trim();
+              const parts = cleaned.split(/[\s,:]+/);
+              if (parts.length >= 6) {
+                const [month, day, year, hour, minute, second] = parts;
+                let h = parseInt(hour);
+                if (isPM && h < 12) h += 12;
+                if (!isPM && h === 12) h = 0;
+                return `${year}-${month.padStart(2,'0')}-${day.padStart(2,'0')}T${String(h).padStart(2,'0')}:${minute.padStart(2,'0')}:${second.padStart(2,'0')}`;
+              }
+            } catch (e) {
+              console.warn("Date parse failed:", dateStr, e);
+            }
+            return null; // Always null on failure, never a broken string
+          };
+
+          // UUID validation helper
+          const isUUID = (str) => {
+            if (!str) return false;
+            const regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            return regex.test(str);
+          };
+
+          const validTeamId = isUUID(profile?.team_id) ? profile.team_id : null;
+          const validOwnerId = isUUID(user?.id) ? user.id : null;
+
+          // Final sanitize
+          let finalRow = { ...filteredRow };
+          if (finalRow.game_date) finalRow.game_date = parseJapaneseDate(finalRow.game_date);
+          if (finalRow.date) finalRow.date = parseJapaneseDate(finalRow.date);
+
           return {
-            ...filteredRow,
+            ...finalRow,
             file_name: dataObj.filename,
             upload_id: uploadId,
-            team_id: profile?.team_id,
-            owner_id: profile?.id,
+            team_id: validTeamId,
+            owner_id: validOwnerId,
             updated_at: new Date().toISOString()
           };
         });
@@ -188,6 +322,85 @@ function App() {
       const msg = err.message || "保存失敗。通信環境を確認して再度お試しください。";
       alert("保存エラー: " + msg);
       setSyncState(prev => ({ ...prev, saving: false, lastError: msg }));
+    }
+  };
+
+  const fetchFromCloud = async () => {
+    if (!user) return;
+    setSyncState(prev => ({ ...prev, saving: true, lastError: null }));
+    const client = getSupabase();
+    
+    try {
+      console.log("Starting full sync from cloud...");
+      
+      // Fetch ALL rows with pagination (Supabase default limit is 1000)
+      const fetchTable = async (table) => {
+        const PAGE_SIZE = 1000;
+        let allRows = [];
+        let from = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          let query = client.from(table).select('*').range(from, from + PAGE_SIZE - 1);
+          if (profile?.team_id && profile?.role !== 'admin') {
+            query = query.eq('team_id', profile.team_id);
+          } else if (profile?.role !== 'admin') {
+            query = query.eq('owner_id', profile?.id);
+          }
+          const { data, error } = await query;
+          if (error) throw error;
+          const rows = data || [];
+          allRows = allRows.concat(rows);
+          if (rows.length < PAGE_SIZE) {
+            hasMore = false; // Got fewer than a full page → done
+          } else {
+            from += PAGE_SIZE;
+          }
+        }
+        console.log(`Fetched ${allRows.length} rows from ${table}`);
+        return allRows;
+      };
+
+      const [savantRaw, blastRaw] = await Promise.all([
+        fetchTable('savant_data'),
+        fetchTable('blast_data')
+      ]);
+
+      // Helper to group flat rows into the "Files" format the app expects
+      const groupIntoFiles = (rows, type) => {
+        const grouped = {};
+        rows.forEach(row => {
+          const fileName = row.file_name || 'Cloud Data';
+          if (!grouped[fileName]) {
+            grouped[fileName] = {
+              id: row.upload_id || `cloud-${fileName}`,
+              filename: fileName,
+              updated_at: row.updated_at,
+              data: [],
+              headers: Object.keys(row).filter(k => !['id', 'owner_id', 'team_id', 'updated_at', 'upload_id'].includes(k))
+            };
+          }
+          grouped[fileName].data.push(row);
+        });
+        return Object.values(grouped);
+      };
+
+      const savantFilesCloud = groupIntoFiles(savantRaw, 'savant');
+      const blastFilesCloud = groupIntoFiles(blastRaw, 'blast');
+
+      // Update states
+      setSavantFiles(savantFilesCloud);
+      setBlastFiles(blastFilesCloud);
+      
+      // Cache to local DB
+      await saveDatasetToLocalDB('savant', savantFilesCloud);
+      await saveDatasetToLocalDB('blast', blastFilesCloud);
+
+      setSyncState(prev => ({ ...prev, saving: false, lastSuccess: 'Synced!' }));
+      console.log("Cloud sync complete.");
+    } catch (err) {
+      console.error("Sync error:", err);
+      setSyncState(prev => ({ ...prev, saving: false, lastError: err.message }));
     }
   };
 
@@ -227,8 +440,12 @@ function App() {
   const mergeFiles = (files) => {
     // If it's the new array format
     if (Array.isArray(files) && files.length > 0) {
+      const allHeaders = new Set();
+      files.forEach(f => {
+        if (f.headers) f.headers.forEach(h => allHeaders.add(h));
+      });
       return {
-        headers: files[0].headers,
+        headers: Array.from(allHeaders),
         data: files.flatMap(f => f.data)
       };
     }
@@ -246,15 +463,15 @@ function App() {
   const renderActiveView = () => {
     const uploadProps = {
       savantFiles, blastFiles, combinedFiles, updateDataState,
-      setActiveView, saveToCloud, syncState, profile
+      setActiveView, saveToCloud, syncState, profile, fetchFromCloud
     };
     switch (activeView) {
       case 'upload':   return <UploadPage {...uploadProps} />;
-      case 'team':     return <TeamAnalysis savantData={savantData} blastData={blastData} combinedData={combinedData} onViewPlayer={(player, team) => { setAnalysisState({ player, team }); setActiveView('player'); }} />;
-      case 'player':   return <PlayerAnalysis savantData={savantData} blastData={blastData} initialPlayer={analysisState.player} initialTeam={analysisState.team} />;
+      case 'team':     return <TeamAnalysis savantData={savantData} blastData={blastData} combinedData={combinedData} onViewPlayer={(player, team, source) => { setAnalysisState({ player, team, source }); setActiveView('player'); }} />;
+      case 'player':   return <PlayerAnalysis savantData={savantData} blastData={blastData} combinedData={combinedData} initialPlayer={analysisState.player} initialTeam={analysisState.team} initialSource={analysisState.source} />;
       case 'game':     return <GameStats savantData={savantData} blastData={blastData} combinedData={combinedData} />;
       case 'custom':   return <CustomCharts savantData={savantData} blastData={blastData} combinedData={combinedData} />;
-      case 'cloud':    return <CloudDataManager updateDataState={updateDataState} profile={profile} />;
+      case 'cloud':    return <CloudDataManager updateDataState={updateDataState} profile={profile} syncState={syncState} fetchFromCloud={fetchFromCloud} />;
       case 'admin':    return profile?.role === 'admin' ? <AdminPanel /> : null;
       default:         return <UploadPage {...uploadProps} />;
     }

@@ -18,10 +18,37 @@ function GameStats({ savantData, blastData, combinedData }) {
   // Group data once when data or key changes
   useEffect(() => {
     if (activeData && activeData.data) {
-      setTeams(extractTeams(activeData.data));
-      setGroupedData(groupEventsByTeamAndPlayer(activeData.data, nameKey));
+      // Determine best teamKey - Prioritize 'Team' as requested
+      const teamCandidates = ['Team', 'team_name', 'home_team', 'away_team', 'Unknown Team'];
+      const teamKey = headers.find(h => teamCandidates.includes(h)) || 'Unknown Team';
+      
+      // Rank candidates for Player Name
+      const candidates = ['Player Name', 'batter_name', 'player_name', 'PlayerName', '選手名', '氏名', 'pitcher_name', 'batter', 'pitcher'];
+      
+      let bestNameKey = nameKey;
+      let bestRank = Infinity;
+
+      // Find the header with the best (lowest) rank in candidates
+      headers.forEach(h => {
+        const rank = candidates.indexOf(h);
+        if (rank !== -1 && rank < bestRank) {
+          bestRank = rank;
+          bestNameKey = h;
+        }
+      });
+
+      if (bestNameKey !== nameKey) {
+        setNameKey(bestNameKey);
+      }
+
+      setTeams(extractTeams(activeData.data, teamKey));
+      setGroupedData(groupEventsByTeamAndPlayer(activeData.data, teamKey, bestNameKey));
     }
-  }, [activeData, nameKey]);
+  }, [activeData, nameKey, headers]);
+
+  // Candidates for the dropdown to filter out useless columns
+  const nameCandidates = ['Player Name', 'batter_name', 'player_name', 'PlayerName', '選手名', '氏名', 'pitcher_name', 'batter', 'pitcher'];
+  const availableNameKeys = headers.filter(h => nameCandidates.includes(h));
 
   useEffect(() => {
     if (selectedTeam && groupedData[selectedTeam]) {
@@ -56,7 +83,7 @@ function GameStats({ savantData, blastData, combinedData }) {
     <div className="animate-in fade-in duration-300">
       <header className="mb-8">
         <h2 className="text-3xl font-extrabold text-white mb-2">試合スタッツ (Game Stats)</h2>
-        <p className="text-slate-400">Savantデータを試合結果と見なし、打率や長打率を算出します。</p>
+        <p className="text-slate-400">Rapsodoデータを試合結果と見なし、打率や長打率を算出します。</p>
       </header>
 
       <div className="bg-slate-800/80 p-8 rounded-3xl border border-slate-700/50 mb-8 shadow-xl">
@@ -70,7 +97,7 @@ function GameStats({ savantData, blastData, combinedData }) {
               onChange={(e) => setSourceType(e.target.value)}
               className="w-full bg-slate-900 border-2 border-emerald-500/20 text-white rounded-xl p-4 focus:ring-4 focus:ring-emerald-500/20 outline-none transition-all font-bold"
             >
-              <option value="savant">Savant Data</option>
+              <option value="savant">Rapsodo Data</option>
               <option value="blast">Blast Data</option>
               <option value="combined">Combined Data</option>
             </select>
@@ -84,7 +111,9 @@ function GameStats({ savantData, blastData, combinedData }) {
               onChange={(e) => setNameKey(e.target.value)}
               className="w-full bg-slate-900 border-2 border-blue-500/20 text-white rounded-xl p-4 focus:ring-4 focus:ring-blue-500/20 outline-none transition-all font-bold"
             >
-              {headers.map((h, idx) => (
+              {availableNameKeys.length > 0 ? availableNameKeys.map((h, idx) => (
+                <option key={idx} value={h}>{h}</option>
+              )) : headers.map((h, idx) => (
                 <option key={idx} value={h}>{h}</option>
               ))}
             </select>
@@ -198,7 +227,7 @@ function GameStats({ savantData, blastData, combinedData }) {
         <div className="flex flex-col items-center justify-center py-32 text-slate-500 border-2 border-dashed border-slate-700 rounded-3xl bg-slate-800/30">
           <Users className="w-20 h-20 mb-6 opacity-20" />
           <p className="text-xl font-medium">チームを選択してスタッツを生成</p>
-          <p className="text-sm mt-2">Savantのevents列を元に自動算出します</p>
+          <p className="text-sm mt-2">Rapsodoのevents列を元に自動算出します</p>
         </div>
       )}
     </div>

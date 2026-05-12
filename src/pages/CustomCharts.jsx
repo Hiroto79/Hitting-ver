@@ -18,7 +18,28 @@ function CustomCharts({ savantData, blastData, combinedData }) {
   const [viewMode, setViewMode] = useState('chart'); // 'chart' or 'table'
 
   const activeData = source === 'savant' ? savantData : source === 'blast' ? blastData : combinedData;
-  const headers = activeData?.headers ?? [];
+  const rawHeaders = activeData?.headers ?? [];
+  
+  // Filter headers to only show those that actually contain numeric data in the current dataset
+  const headers = useMemo(() => {
+    if (!activeData?.data || activeData.data.length === 0) return [];
+    
+    // Internal keys to always exclude
+    const internalKeys = ['id', 'owner_id', 'team_id', 'upload_id', 'updated_at', 'created_at', 'file_name', 'filename'];
+    
+    return rawHeaders.filter(h => {
+      if (internalKeys.includes(h.toLowerCase())) return false;
+      
+      // Check if this header has at least one numeric value in the first 100 rows
+      const sampleRows = activeData.data.slice(0, 100);
+      return sampleRows.some(row => {
+        const val = row[h];
+        if (val === null || val === undefined || val === '') return false;
+        const n = parseNum(val);
+        return !isNaN(n);
+      });
+    });
+  }, [rawHeaders, activeData]);
 
   const handleSourceChange = (e) => {
     setSource(e.target.value);
@@ -72,7 +93,7 @@ function CustomCharts({ savantData, blastData, combinedData }) {
               onChange={handleSourceChange}
               className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-blue-500 outline-none"
             >
-              <option value="savant" disabled={!savantData}>Savant Data {!savantData && '(未読込)'}</option>
+              <option value="savant" disabled={!savantData}>Rapsodo Data {!savantData && '(未読込)'}</option>
               <option value="blast" disabled={!blastData}>Blast Data {!blastData && '(未読込)'}</option>
               <option value="combined" disabled={!combinedData}>Combined Data {!combinedData && '(未読込)'}</option>
             </select>
@@ -165,8 +186,8 @@ function CustomCharts({ savantData, blastData, combinedData }) {
                         return (
                           <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-sm">
                             {d.playerLabel && <p className="font-bold text-white mb-1 border-b border-slate-700 pb-1">{d.playerLabel}</p>}
-                            <p className="text-blue-400">{xAxis}: <span className="text-white font-mono">{d.x.toFixed(2)}</span></p>
-                            <p className="text-purple-400">{yAxis}: <span className="text-white font-mono">{d.y.toFixed(2)}</span></p>
+                            <p className="text-blue-400">{xAxis}: <span className="text-white font-mono">{d.x.toFixed(1)}</span></p>
+                            <p className="text-purple-400">{yAxis}: <span className="text-white font-mono">{d.y.toFixed(1)}</span></p>
                           </div>
                         );
                       }
@@ -201,8 +222,8 @@ function CustomCharts({ savantData, blastData, combinedData }) {
                       <tr key={i} className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
                         <td className="px-4 py-2 text-slate-500">{i + 1}</td>
                         {row.playerLabel !== '' && <td className="px-4 py-2 font-medium text-white">{row.playerLabel}</td>}
-                        <td className="px-4 py-2 font-mono text-blue-300">{row.x.toFixed(2)}</td>
-                        <td className="px-4 py-2 font-mono text-purple-300">{row.y.toFixed(2)}</td>
+                        <td className="px-4 py-2 font-mono text-blue-300">{row.x.toFixed(1)}</td>
+                        <td className="px-4 py-2 font-mono text-purple-300">{row.y.toFixed(1)}</td>
                       </tr>
                     ))}
                   </tbody>

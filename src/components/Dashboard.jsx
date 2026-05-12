@@ -51,7 +51,7 @@ function Dashboard({ savantData, blastData }) {
           <div>
             <label className="block text-sm font-medium text-gray-400 mb-2 flex items-center">
               <Users className="w-4 h-4 mr-1" />
-              チームを選択 (Savantから抽出)
+              チームを選択 (Rapsodoから抽出)
             </label>
             <select
               value={selectedTeam}

@@ -3,12 +3,17 @@ import Papa from 'papaparse';
 import { supabase, getSupabase } from '../lib/supabase';
 import { Database, Trash2, RefreshCw, HardDrive, CheckCircle2, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
-function CloudDataManager({ updateDataState, profile }) {
+function CloudDataManager({ updateDataState, profile, syncState, fetchFromCloud }) {
   const [loading, setLoading] = useState(false);
   const [datasets, setDatasets] = useState([]);
   const [error, setError] = useState(null);
 
   useEffect(() => { fetchDatasets(); }, []);
+
+  const handleManualSync = async () => {
+    await fetchFromCloud();
+    fetchDatasets();
+  };
 
   const fetchDatasets = async () => {
     setLoading(true);
@@ -22,8 +27,7 @@ function CloudDataManager({ updateDataState, profile }) {
       }
       const { data: unifiedData, error: unifiedError } = await query;
       
-      // 2. Fetch from legacy tables (optional/fallback)
-      // We increase limit to ensure we see unique filenames even in large tables
+      // 2. Fetch from legacy tables
       let savantLegacyQuery = client.from('savant_data').select('file_name, created_at');
       let blastLegacyQuery = client.from('blast_data').select('file_name, created_at');
       
@@ -32,8 +36,8 @@ function CloudDataManager({ updateDataState, profile }) {
         blastLegacyQuery = blastLegacyQuery.eq('team_id', profile.team_id);
       }
       
-      const { data: savantLegacy } = await savantLegacyQuery.range(0, 49999);
-      const { data: blastLegacy } = await blastLegacyQuery.range(0, 49999);
+      const { data: savantLegacy } = await savantLegacyQuery.limit(1000);
+      const { data: blastLegacy } = await blastLegacyQuery.limit(1000);
 
       // Process legacy data into a similar format
       const processedLegacy = [];
@@ -79,23 +83,18 @@ function CloudDataManager({ updateDataState, profile }) {
     const client = getSupabase();
     try {
       if (isLegacy) {
-        // Delete from legacy table
         const table = type === 'savant' ? 'savant_data' : 'blast_data';
         const { error } = await client.from(table).delete().eq('file_name', filename);
         if (error) throw error;
       } else {
-        // Delete from new unified table
         let query = client.from('baseball_data').delete().eq('id', id);
         if (profile && profile.role !== 'admin' && profile.team_id) {
           query = query.eq('team_id', profile.team_id);
         }
         const { error } = await query;
         if (error) throw error;
-        
-        // Remove from local state
         updateDataState(type, id, 'remove');
       }
-      
       fetchDatasets();
       alert("削除しました。");
     } catch (err) {
@@ -106,12 +105,24 @@ function CloudDataManager({ updateDataState, profile }) {
 
   return (
     <div className="animate-in fade-in duration-500">
-      <header className="mb-8">
-        <h2 className="text-3xl font-extrabold text-white mb-2 flex items-center">
-          <HardDrive className="w-8 h-8 mr-3 text-blue-400" />
-          クラウドデータ管理
-        </h2>
-        <p className="text-slate-400">サーバーに保存されているファイルの確認・削除を行います。</p>
+      <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-3xl font-extrabold text-white mb-2 flex items-center">
+            <HardDrive className="w-8 h-8 mr-3 text-blue-400" />
+            クラウドデータ管理
+          </h2>
+          <p className="text-slate-400">サーバーに保存されているファイルの確認・同期・削除を行います。</p>
+        </div>
+        <button 
+          onClick={handleManualSync}
+          disabled={syncState?.saving || loading}
+          className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black transition-all ${
+            syncState?.saving ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-xl'
+          }`}
+        >
+          <RefreshCw className={`w-5 h-5 ${syncState?.saving ? 'animate-spin' : ''}`} />
+          {syncState?.saving ? '同期中...' : 'クラウドから同期'}
+        </button>
       </header>
 
       {error && (

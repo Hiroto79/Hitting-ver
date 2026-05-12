@@ -98,46 +98,92 @@ export const calculateStats = (events) => {
   return { ba, slg, totalBases, ab: abEvents.length };
 };
 
-export const calculateAverages = (events, key) => {
+export const BS_KEYS = ['bat_speed', 'BatSpeed', 'バットスピード', 'バット速度', 'バットスピー', 'Bat Speed (mph)'];
+export const PLANE_KEYS = ['on_plane_efficiency', 'OnPlaneEfficiency', 'オンプレーン効率', 'オンプレーン%', 'オンプレーン', 'On Plane Efficiency (%)'];
+export const CONN_KEYS = ['connection_score', 'ConnectionScore', 'コネクション', '体とバットの'];
+export const ROT_KEYS = ['rotation_score', 'RotationScore', 'ローテーション', '体の回転によ', '体の回転による加速スコア'];
+export const TIME_KEYS = ['time_to_contact', 'TimeToContact', 'スイング時間', 'Time to Contact (sec)'];
+export const EV_KEYS = ['ExitVelocity', 'launch_speed', 'exit_velocity', 'EV', '打球速度', '打球スピード'];
+export const LA_KEYS = ['LaunchAngle', 'launch_angle', 'LA', '打球角度'];
+export const DIST_KEYS = ['Distance', 'hit_distance_sc', 'distance', '飛距離', '推定飛距離'];
+export const ROTATION_ACCEL_KEYS = ['rotation_acceleration', 'Rotation Acceleration', '回転加速', '体の回転による'];
+export const AA_KEYS = ['attack_angle', 'アタックアングル', 'AttackAngle', 'AA', 'アッパースイング度'];
+export const PITCH_VELO_KEYS = ['PitchBallVelo', 'release_speed', 'pitch_velocity', '球速'];
+export const HS_KEYS = ['peak_hand_speed', 'PeakHandSpeed', '手の最大速度', '手の最大スピード', 'Hand Speed'];
+export const ON_PLANE_SCORE_KEYS = ['on_plane_score', 'OnPlaneScore', 'オンプレーンスコア', 'オンプレーンのスコア'];
+
+export const getDataValue = (row, keyOrKeys) => {
+  if (!row) return 0;
+  const targetKeys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
+  
+  // 1. Try direct match first (Rapsodo case-sensitive headers)
+  for (const k of targetKeys) {
+    if (row[k] !== undefined && row[k] !== null && row[k] !== '') {
+      const val = parseFloat(String(row[k]).replace(/[^-0-9.]/g, ''));
+      if (isNaN(val)) continue;
+      
+      // USER DATA IS KM/H. NO CONVERSION.
+      return val;
+    }
+  }
+
+  // 2. Fuzzy match for truncated headers (Excel exports like 'SerialNumbe')
+  for (const k of targetKeys) {
+    const actualKey = Object.keys(row).find(ak => ak.toLowerCase().startsWith(k.toLowerCase()));
+    if (actualKey && row[actualKey] !== undefined && row[actualKey] !== null && row[actualKey] !== '') {
+      const val = parseFloat(String(row[actualKey]).replace(/[^-0-9.]/g, ''));
+      if (!isNaN(val)) return val;
+    }
+  }
+  
+  return 0;
+};
+
+export const calculateAverages = (events, keys) => {
   if (!events || events.length === 0) return 0;
-  const validEvents = events.filter(e => e[key] !== null && e[key] !== undefined && !isNaN(parseNumeric(e[key])));
+  const validEvents = events.filter(e => {
+    const val = getDataValue(e, keys);
+    return val !== null && val !== undefined && !isNaN(val);
+  });
   if (validEvents.length === 0) return 0;
-  const sum = validEvents.reduce((acc, e) => acc + parseNumeric(e[key]), 0);
+  const sum = validEvents.reduce((acc, e) => acc + getDataValue(e, keys), 0);
   return (sum / validEvents.length);
 };
 
-export const calculateMax = (events, key) => {
+export const calculateMax = (events, keys) => {
   if (!events || events.length === 0) return 0;
   let max = 0;
   events.forEach(e => {
-    const val = parseNumeric(e[key]);
+    const val = getDataValue(e, keys);
     if (!isNaN(val) && val > max) max = val;
   });
   return max;
 };
 
 // Group events by team and then by player for O(N) lookup
-export const groupEventsByTeamAndPlayer = (data, nameKey = 'player_name') => {
+export const groupEventsByTeamAndPlayer = (data, teamKey = 'team_name', nameKey = 'player_name') => {
   if (!data || !Array.isArray(data)) return {};
   
-  return data.reduce((acc, row) => {
-    // チーム名の取得（最も確実な home_team を優先）
-    const team = row.home_team || row.away_team || 'Unknown Team';
+  const groups = {};
+  const nameFallbacks = ['player_name', 'Player Name', 'Player', 'PlayerName', '選手名', '氏名', 'batter_name', 'pitcher_name'];
+
+  data.forEach(row => {
+    // Determine Team
+    let tName = (row[teamKey] || 'Unknown Team').toString().trim();
+    if (tName === '' || tName === 'null' || tName === 'undefined') tName = 'Unknown Team';
     
-    // 選手名の取得（数値IDの場合も確実に文字列にし、空の場合は Unknown としない工夫）
-    const rawVal = row[nameKey];
-    let player = 'Unknown Player';
-    
-    if (rawVal !== null && rawVal !== undefined && String(rawVal).trim() !== '') {
-      player = String(rawVal);
-    } else {
-      // 指定された列が空の場合、バックアップとして player_name や ID 列を探す
-      player = row.player_name || row.batter || row.pitcher || 'Unknown Player';
+    // Determine Player Name with robust fallback
+    let pName = row[nameKey];
+    if (!pName || pName.toString().trim() === '') {
+      const foundKey = nameFallbacks.find(k => row[k] !== undefined && row[k] !== null && row[k].toString().trim() !== '');
+      pName = foundKey ? row[foundKey] : 'Unknown Player';
     }
-    
-    if (!acc[team]) acc[team] = {};
-    if (!acc[team][player]) acc[team][player] = [];
-    acc[team][player].push(row);
-    return acc;
-  }, {});
+    pName = pName.toString().trim();
+
+    if (!groups[tName]) groups[tName] = {};
+    if (!groups[tName][pName]) groups[tName][pName] = [];
+    groups[tName][pName].push(row);
+  });
+  
+  return groups;
 };
