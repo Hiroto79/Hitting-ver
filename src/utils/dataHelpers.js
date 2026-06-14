@@ -112,6 +112,13 @@ export const PITCH_VELO_KEYS = ['PitchBallVelo', 'release_speed', 'pitch_velocit
 export const HS_KEYS = ['peak_hand_speed', 'PeakHandSpeed', '手の最大速度', '手の最大スピード', 'Hand Speed'];
 export const ON_PLANE_SCORE_KEYS = ['on_plane_score', 'OnPlaneScore', 'オンプレーンスコア', 'オンプレーンのスコア'];
 
+// Cache for fuzzy key resolutions to avoid Object.keys() on every row
+const keyResolutionCache = new Map();
+
+export const clearKeyResolutionCache = () => {
+  keyResolutionCache.clear();
+};
+
 export const getDataValue = (row, keyOrKeys) => {
   if (!row) return 0;
   const targetKeys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
@@ -119,18 +126,27 @@ export const getDataValue = (row, keyOrKeys) => {
   // 1. Try direct match first (Rapsodo case-sensitive headers)
   for (const k of targetKeys) {
     if (row[k] !== undefined && row[k] !== null && row[k] !== '') {
+      if (typeof row[k] === 'number') return row[k];
       const val = parseFloat(String(row[k]).replace(/[^-0-9.]/g, ''));
-      if (isNaN(val)) continue;
-      
-      // USER DATA IS KM/H. NO CONVERSION.
-      return val;
+      if (!isNaN(val)) return val;
     }
   }
 
   // 2. Fuzzy match for truncated headers (Excel exports like 'SerialNumbe')
   for (const k of targetKeys) {
-    const actualKey = Object.keys(row).find(ak => ak.toLowerCase().startsWith(k.toLowerCase()));
+    const rowKeys = Object.keys(row);
+    const schemaSignature = rowKeys[0] || '';
+    const cacheKey = `${schemaSignature}:${k}`;
+    
+    let actualKey = keyResolutionCache.get(cacheKey);
+    if (actualKey === undefined) {
+      const lowerK = k.toLowerCase();
+      actualKey = rowKeys.find(ak => ak.toLowerCase().startsWith(lowerK)) || null;
+      keyResolutionCache.set(cacheKey, actualKey);
+    }
+    
     if (actualKey && row[actualKey] !== undefined && row[actualKey] !== null && row[actualKey] !== '') {
+      if (typeof row[actualKey] === 'number') return row[actualKey];
       const val = parseFloat(String(row[actualKey]).replace(/[^-0-9.]/g, ''));
       if (!isNaN(val)) return val;
     }
@@ -141,22 +157,27 @@ export const getDataValue = (row, keyOrKeys) => {
 
 export const calculateAverages = (events, keys) => {
   if (!events || events.length === 0) return 0;
-  const validEvents = events.filter(e => {
-    const val = getDataValue(e, keys);
-    return val !== null && val !== undefined && !isNaN(val);
-  });
-  if (validEvents.length === 0) return 0;
-  const sum = validEvents.reduce((acc, e) => acc + getDataValue(e, keys), 0);
-  return (sum / validEvents.length);
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < events.length; i++) {
+    const val = getDataValue(events[i], keys);
+    if (val !== null && val !== undefined && !isNaN(val)) {
+      sum += val;
+      count++;
+    }
+  }
+  return count > 0 ? (sum / count) : 0;
 };
 
 export const calculateMax = (events, keys) => {
   if (!events || events.length === 0) return 0;
   let max = 0;
-  events.forEach(e => {
-    const val = getDataValue(e, keys);
-    if (!isNaN(val) && val > max) max = val;
-  });
+  for (let i = 0; i < events.length; i++) {
+    const val = getDataValue(events[i], keys);
+    if (!isNaN(val) && val > max) {
+      max = val;
+    }
+  }
   return max;
 };
 

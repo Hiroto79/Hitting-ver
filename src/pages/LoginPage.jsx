@@ -16,7 +16,7 @@ function LoginPage({ onLogin }) {
 
     // 仮のハードコードされた管理者ログイン
     setTimeout(() => {
-      if (email === 'admin@example.com' && password === 'admin123') {
+      if (email === 'admin@example.com' && password === '7911') {
         const mockUser = { id: 'admin-id', email: 'admin@example.com' };
         const mockProfile = { role: 'admin', team_id: 'admin', display_name: '管理者' };
         

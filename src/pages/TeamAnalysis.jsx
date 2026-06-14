@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { extractTeams, extractPlayersByTeam, getPlayerStats, calculateAverages, calculateMax, groupEventsByTeamAndPlayer, parseNumeric, getDataValue, EV_KEYS, BS_KEYS, LA_KEYS, AA_KEYS } from '../utils/dataHelpers';
 import { ScatterChart, Scatter, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, LabelList } from 'recharts';
 import { Users, TrendingUp, Zap, BarChart3, Eye } from 'lucide-react';
@@ -9,7 +9,6 @@ function TeamAnalysis({ savantData, blastData, combinedData, onViewPlayer }) {
   
   const [teams, setTeams] = useState([]);
   const [selectedTeam, setSelectedTeam] = useState('');
-  const [teamStats, setTeamStats] = useState(null);
   const [nameKey, setNameKey] = useState('player_name');
 
   const headers = activeData ? activeData.headers : [];
@@ -70,59 +69,63 @@ function TeamAnalysis({ savantData, blastData, combinedData, onViewPlayer }) {
     }
   }, [selectedTeam, groupedData]);
 
-  useEffect(() => {
-    if (selectedTeam && groupedData[selectedTeam]) {
-      const teamPlayers = groupedData[selectedTeam];
-      
-      const statsList = Object.keys(teamPlayers).map(player => {
-        const events = teamPlayers[player];
-        if (!events || !Array.isArray(events)) return null;
+  const statsList = useMemo(() => {
+    if (!selectedTeam || !groupedData[selectedTeam]) return [];
+    
+    const teamPlayers = groupedData[selectedTeam];
+    
+    const list = Object.keys(teamPlayers).map(player => {
+      const events = teamPlayers[player];
+      if (!events || !Array.isArray(events)) return null;
 
-        const filteredEvents = events.filter(e => {
-          if (!e) return false;
-          const isHitEvent = e.events && typeof e.events === 'string' && ['single', 'double', 'triple', 'home_run'].includes(e.events.toLowerCase());
-          const la = getDataValue(e, LA_KEYS);
-          const passHits = hitsOnly ? isHitEvent : true;
-          const passLa = !isNaN(la) ? (la >= laRange[0] && la <= laRange[1]) : true;
-          return passHits && passLa;
-        });
-
-        if (filteredEvents.length === 0) return null;
-
-        return {
-          player,
-          avgBatSpeed: Number(calculateAverages(filteredEvents, BS_KEYS)),
-          maxBatSpeed: Number(calculateMax(filteredEvents, BS_KEYS)),
-          avgAttackAngle: Number(calculateAverages(filteredEvents, AA_KEYS)),
-          avgExitVelo: Number(calculateAverages(filteredEvents, EV_KEYS)),
-          maxExitVelo: Number(calculateMax(filteredEvents, EV_KEYS)),
-          avgLaunchAngle: Number(calculateAverages(filteredEvents, LA_KEYS)),
-          swings: filteredEvents.length
-        };
-      }).filter(Boolean);
-
-      statsList.sort((a, b) => (b.avgBatSpeed || 0) - (a.avgBatSpeed || 0));
-
-      const currentFilter = activePlayers.length > 0 ? activePlayers : Object.keys(teamPlayers);
-      const activeStats = statsList.filter(s => currentFilter.includes(s.player));
-
-      const teamAvgBatSpeed = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + (s.avgBatSpeed || 0), 0) / activeStats.length).toFixed(1) : 0;
-      const teamAvgAttackAngle = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + (s.avgAttackAngle || 0), 0) / activeStats.length).toFixed(1) : 0;
-      const teamAvgExitVelo = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + (s.avgExitVelo || 0), 0) / activeStats.length).toFixed(1) : 0;
-      const teamAvgLaunchAngle = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + (s.avgLaunchAngle || 0), 0) / activeStats.length).toFixed(1) : 0;
-
-      setTeamStats({
-        allPlayers: statsList,
-        players: activeStats,
-        teamAvgBatSpeed,
-        teamAvgAttackAngle,
-        teamAvgExitVelo,
-        teamAvgLaunchAngle
+      const filteredEvents = events.filter(e => {
+        if (!e) return false;
+        const isHitEvent = e.events && typeof e.events === 'string' && ['single', 'double', 'triple', 'home_run'].includes(e.events.toLowerCase());
+        const la = getDataValue(e, LA_KEYS);
+        const passHits = hitsOnly ? isHitEvent : true;
+        const passLa = !isNaN(la) ? (la >= laRange[0] && la <= laRange[1]) : true;
+        return passHits && passLa;
       });
-    } else {
-      setTeamStats(null);
-    }
-  }, [selectedTeam, groupedData, hitsOnly, laRange, activePlayers]);
+
+      if (filteredEvents.length === 0) return null;
+
+      return {
+        player,
+        avgBatSpeed: Number(calculateAverages(filteredEvents, BS_KEYS)),
+        maxBatSpeed: Number(calculateMax(filteredEvents, BS_KEYS)),
+        avgAttackAngle: Number(calculateAverages(filteredEvents, AA_KEYS)),
+        avgExitVelo: Number(calculateAverages(filteredEvents, EV_KEYS)),
+        maxExitVelo: Number(calculateMax(filteredEvents, EV_KEYS)),
+        avgLaunchAngle: Number(calculateAverages(filteredEvents, LA_KEYS)),
+        swings: filteredEvents.length
+      };
+    }).filter(Boolean);
+
+    list.sort((a, b) => (b.avgBatSpeed || 0) - (a.avgBatSpeed || 0));
+    return list;
+  }, [selectedTeam, groupedData, hitsOnly, laRange]);
+
+  const teamStats = useMemo(() => {
+    if (!selectedTeam || !groupedData[selectedTeam] || statsList.length === 0) return null;
+
+    const teamPlayers = groupedData[selectedTeam];
+    const currentFilter = activePlayers.length > 0 ? activePlayers : Object.keys(teamPlayers);
+    const activeStats = statsList.filter(s => currentFilter.includes(s.player));
+
+    const teamAvgBatSpeed = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + (s.avgBatSpeed || 0), 0) / activeStats.length).toFixed(1) : 0;
+    const teamAvgAttackAngle = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + (s.avgAttackAngle || 0), 0) / activeStats.length).toFixed(1) : 0;
+    const teamAvgExitVelo = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + (s.avgExitVelo || 0), 0) / activeStats.length).toFixed(1) : 0;
+    const teamAvgLaunchAngle = activeStats.length > 0 ? (activeStats.reduce((acc, s) => acc + (s.avgLaunchAngle || 0), 0) / activeStats.length).toFixed(1) : 0;
+
+    return {
+      allPlayers: statsList,
+      players: activeStats,
+      teamAvgBatSpeed,
+      teamAvgAttackAngle,
+      teamAvgExitVelo,
+      teamAvgLaunchAngle
+    };
+  }, [selectedTeam, groupedData, statsList, activePlayers]);
 
   // Generate colors for scatter plot points
   const COLORS = [
