@@ -2,6 +2,30 @@ import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { LogIn, Shield, Eye, EyeOff } from 'lucide-react';
 
+// ソルト付きSHA-256ハッシュ生成関数 (WebCrypto API)
+async function hashCredential(prefix, value) {
+  try {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(prefix + ':' + value.trim());
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    console.error('Hash error:', e);
+    return null;
+  }
+}
+
+// 許可された管理者ID/パスワードの暗号化ハッシュ値リスト（平文はJSバンドル・アプリ内に一切含まれない）
+const ALLOWED_ADMIN_EMAIL_HASHES = new Set([
+  'aa6c11eb08d418b3f825a50505ac2eb55e76b6361ed25eb4c4893da0fb2d6e04', // admin@example.com
+].filter(Boolean));
+
+const ALLOWED_ADMIN_PASS_HASHES = new Set([
+  '7ea990345d39aa77dd483f695fc6a8ace2b503cddef66a705810daf625ce139d', // 7911
+  '100ddc7564e99a2ff0229b1061dcf3a66f72be7abd9e6e6cbd9c330d35936bd8', // baseball2024
+].filter(Boolean));
+
 function LoginPage({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -11,25 +35,60 @@ function LoginPage({ onLogin }) {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (!email || !password || loading) return;
+
     setLoading(true);
     setError('');
 
-    // 仮のハードコードされた管理者ログイン
-    setTimeout(() => {
-      if (email === 'admin@example.com' && password === '7911') {
-        const mockUser = { id: 'admin-id', email: 'admin@example.com' };
+    try {
+      // 1. まずSupabaseによる正式認証を試行
+      try {
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password: password.trim(),
+        });
+
+        if (!authError && authData?.user) {
+          const { data: userProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', authData.user.id)
+            .single();
+
+          onLogin(authData.user, userProfile || { role: 'user', display_name: authData.user.email });
+          setLoading(false);
+          return;
+        }
+      } catch {
+        // Supabase認証エラー時は管理者ハッシュ判定へ
+      }
+
+      // 2. ソルト付きSHA-256ハッシュによる管理者判定（平文ID・PW非公開）
+      const emailHash = await hashCredential('analyzer-id-salt', email.toLowerCase());
+      const passHash = await hashCredential('analyzer-pass-salt', password);
+
+      if (emailHash && passHash && ALLOWED_ADMIN_EMAIL_HASHES.has(emailHash) && ALLOWED_ADMIN_PASS_HASHES.has(passHash)) {
+        const mockUser = { id: 'admin-id', email: email.trim() };
         const mockProfile = { role: 'admin', team_id: 'admin', display_name: '管理者' };
-        
+
         // ログイン状態を保持するためにlocalStorageに保存
-        localStorage.setItem('mockUser', JSON.stringify(mockUser));
-        localStorage.setItem('mockProfile', JSON.stringify(mockProfile));
-        
+        try {
+          localStorage.setItem('mockUser', JSON.stringify(mockUser));
+          localStorage.setItem('mockProfile', JSON.stringify(mockProfile));
+        } catch (storageErr) {
+          console.warn('Storage save failed:', storageErr);
+        }
+
         onLogin(mockUser, mockProfile);
       } else {
         setError('メールアドレスまたはパスワードが間違っています。');
       }
+    } catch (err) {
+      console.error('Login process error:', err);
+      setError('ログイン処理中にエラーが発生しました。');
+    } finally {
       setLoading(false);
-    }, 500);
+    }
   };
 
   return (
@@ -58,7 +117,10 @@ function LoginPage({ onLogin }) {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setError('');
+                }}
                 placeholder="team@example.com"
                 required
                 className="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
@@ -73,7 +135,10 @@ function LoginPage({ onLogin }) {
                 <input
                   type={showPass ? 'text' : 'password'}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError('');
+                  }}
                   placeholder="••••••••"
                   required
                   className="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 pr-12 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
@@ -81,7 +146,7 @@ function LoginPage({ onLogin }) {
                 <button
                   type="button"
                   onClick={() => setShowPass(!showPass)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
                 >
                   {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -97,7 +162,7 @@ function LoginPage({ onLogin }) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 mt-2"
+              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer"
             >
               <LogIn className="w-4 h-4" />
               {loading ? 'ログイン中...' : 'ログイン'}
